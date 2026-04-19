@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.vercel/
+.DS_Store
+npm-debug.log*
+
+# Environment / secrets
+.env
+.env.backend
+.env.local
+.env.*.local
+
+# Debug/setup scripts
+backend/setup.php
+backend/debug_*.php
+
+# Rate limit temp files
+/tmp/exam_rl/
