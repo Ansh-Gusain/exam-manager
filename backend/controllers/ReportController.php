@@ -6,22 +6,22 @@ class ReportController {
         $db = getDB();
         $q  = getQuery();
 
-        $where  = ['1=1'];
+        $joinWhere  = '';
         $values = [];
         if (!empty($q['examId'])) {
-            $where[]  = 'sa.exam_id = ?';
-            $values[] = $q['examId'];
+            $joinWhere = ' AND sa.exam_id = ?';
+            $values[]  = $q['examId'];
         }
 
-        $sql = '
+        $sql = "
             SELECT r.id, r.room_number, r.building, r.capacity,
                    COUNT(sa.id) AS allocated,
                    ROUND(COUNT(sa.id) / r.capacity * 100, 1) AS utilization_pct
             FROM rooms r
-            LEFT JOIN seating_allocations sa ON r.id = sa.room_id AND ' . implode(' AND ', $where) . '
+            LEFT JOIN seating_allocations sa ON r.id = sa.room_id$joinWhere
             GROUP BY r.id
             ORDER BY r.building, r.room_number
-        ';
+        ";
 
         $stmt = $db->prepare($sql);
         $stmt->execute($values);

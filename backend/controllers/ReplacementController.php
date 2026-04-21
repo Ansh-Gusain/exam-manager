@@ -80,16 +80,16 @@ class ReplacementController {
             errorResponse('Invalid status value');
         }
 
-        $approvedAt = in_array($status, ['approved', 'rejected']) ? 'NOW()' : 'NULL';
-
         $stmt = $db->prepare("
             UPDATE replacement_logs
-            SET status=?, replacement_faculty_id=?, approved_at=$approvedAt
+            SET status=?, replacement_faculty_id=?,
+                approved_at = CASE WHEN ? IN ('approved','rejected') THEN NOW() ELSE NULL END
             WHERE id=?
         ");
         $stmt->execute([
             $status,
             $data['replacementFacultyId'] ?? $log['replacement_faculty_id'],
+            $status,
             $params['id']
         ]);
 

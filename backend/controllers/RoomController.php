@@ -35,6 +35,8 @@ class RoomController {
             $r['has_projector'] = (bool)$r['has_projector'];
             $r['capacity']      = (int)$r['capacity'];
             $r['floor']         = (int)$r['floor'];
+            $r['rowsCount']     = (int)($r['rows_count'] ?? 6);
+            $r['colsCount']     = (int)($r['cols_count'] ?? 8);
         }
         jsonResponse($rows);
     }
@@ -47,36 +49,53 @@ class RoomController {
         $data = getBody();
         $this->validate($data);
 
+        $rows = (int)($data['rowsCount'] ?? 6);
+        $cols = (int)($data['colsCount'] ?? 8);
+
         $db   = getDB();
         $stmt = $db->prepare('
-            INSERT INTO rooms (room_number, building, floor, capacity, has_projector, is_available)
-            VALUES (?, ?, ?, ?, ?, 1)
+            INSERT INTO rooms (room_number, building, floor, capacity, rows_count, cols_count, has_projector, is_available)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1)
         ');
         $stmt->execute([
             $data['roomNumber'], $data['building'], $data['floor'] ?? 0,
-            $data['capacity'], isset($data['hasProjector']) ? (int)$data['hasProjector'] : 0
+            $rows * $cols,
+            $rows, $cols,
+            isset($data['hasProjector']) ? (int)$data['hasProjector'] : 0
         ]);
 
         jsonResponse($this->findOrFail($db->lastInsertId()), 201);
     }
 
     public function update(array $params): void {
-        $this->findOrFail($params['id']);
+        $existing = $this->findOrFail($params['id']);
         $data = getBody();
         $this->validate($data);
 
+        $rows = (int)($data['rowsCount'] ?? 6);
+        $cols = (int)($data['colsCount'] ?? 8);
+        $newCapacity = $rows * $cols;
+
         $db   = getDB();
         $stmt = $db->prepare('
-            UPDATE rooms SET room_number=?, building=?, floor=?, capacity=?, has_projector=?, is_available=?
+            UPDATE rooms SET room_number=?, building=?, floor=?, capacity=?,
+            rows_count=?, cols_count=?, has_projector=?, is_available=?
             WHERE id=?
         ');
         $stmt->execute([
             $data['roomNumber'], $data['building'], $data['floor'] ?? 0,
-            $data['capacity'],
+            $newCapacity,
+            $rows, $cols,
             isset($data['hasProjector']) ? (int)$data['hasProjector'] : 0,
             isset($data['isAvailable']) ? (int)$data['isAvailable'] : 1,
             $params['id']
         ]);
+
+        // If layout changed, clear stale seating allocations for this room
+        if ((int)$existing['rows_count'] !== $rows || (int)$existing['cols_count'] !== $cols) {
+            $db->prepare('DELETE FROM seating_allocations WHERE room_id = ?')->execute([$params['id']]);
+            $db->prepare('DELETE FROM invigilation_allocations WHERE room_id = ?')->execute([$params['id']]);
+        }
 
         jsonResponse($this->findOrFail($params['id']));
     }
@@ -96,12 +115,18 @@ class RoomController {
         $row['has_projector'] = (bool)$row['has_projector'];
         $row['capacity']      = (int)$row['capacity'];
         $row['floor']         = (int)$row['floor'];
+        $row['rowsCount']     = (int)($row['rows_count'] ?? 6);
+        $row['colsCount']     = (int)($row['cols_count'] ?? 8);
         return $row;
     }
 
     private function validate(array $data): void {
-        foreach (['roomNumber','building','capacity'] as $f) {
+        foreach (['roomNumber','building'] as $f) {
             if (empty($data[$f])) errorResponse("Field '$f' is required");
+        }
+        if (empty($data['rowsCount']) || empty($data['colsCount'])) {
+            errorResponse("Rows and columns are required");
         }
     }
 }
+

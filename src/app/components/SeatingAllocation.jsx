@@ -1,4 +1,4 @@
-﻿import { useState, useMemo } from "react";
+﻿import { useState, useMemo, useRef } from "react";
 import { useStore } from "../lib/store";
 import { api } from "../lib/api";
 import { Card, CardContent, CardHeader } from "./ui/card";
@@ -29,7 +29,8 @@ import {
   DoorOpen,
   LayoutGrid,
   List,
-  TableIcon
+  TableIcon,
+  Printer
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -147,7 +148,8 @@ function RoomSeatingGrid({ room, allocations, students, exam, exams = [], invigi
   sorted.forEach((sa) => { seatMap[sa.seatNumber] = sa; });
   const maxSeat = sorted.length > 0 ? Math.max(...sorted.map(s => s.seatNumber || 0)) : 0;
 
-  const COLS = 6;
+  const COLS = Math.max(2, room.colsCount || room.cols_count || 6);
+  const half = Math.floor(COLS / 2);
   const rows = [];
   for (let i = 1; i <= maxSeat; i += COLS) {
     const row = [];
@@ -225,45 +227,33 @@ function RoomSeatingGrid({ room, allocations, students, exam, exams = [], invigi
           <table className="w-full border-collapse text-[0.7rem]">
             <thead>
               <tr>
-                <th className="border border-border bg-blue-50 px-2 py-1.5 text-center font-semibold text-[0.65rem] text-blue-700">DESK-1</th>
-                <th className="border border-border bg-green-50 px-2 py-1.5 text-center font-semibold text-[0.65rem] text-green-700">DESK-2</th>
-                <th className="border border-border bg-blue-50 px-2 py-1.5 text-center font-semibold text-[0.65rem] text-blue-700">DESK-3</th>
-                <th className="bg-background w-3 border-0"></th>
-                <th className="border border-border bg-green-50 px-2 py-1.5 text-center font-semibold text-[0.65rem] text-green-700">DESK-1</th>
-                <th className="border border-border bg-blue-50 px-2 py-1.5 text-center font-semibold text-[0.65rem] text-blue-700">DESK-2</th>
-                <th className="border border-border bg-green-50 px-2 py-1.5 text-center font-semibold text-[0.65rem] text-green-700">DESK-3</th>
+                {Array.from({ length: COLS + 1 }).map((_, ci) => {
+                  if (ci === half) return <th key="gap" className="bg-background w-3 border-0" />;
+                  const col = ci > half ? ci - 1 : ci;
+                  const isA = col % 2 === 0;
+                  const deskNum = ci < half ? ci + 1 : ci - half;
+                  return (
+                    <th key={ci} className={`border border-border px-2 py-1.5 text-center font-semibold text-[0.65rem] ${isA ? "bg-blue-50 text-blue-700" : "bg-green-50 text-green-700"}`}>
+                      DESK-{deskNum}
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
               {rows.map((row, ri) => (
                 <tr key={ri}>
-                  {[0, 1, 2].map((ci) => {
-                    const sa = row[ci];
+                  {Array.from({ length: COLS + 1 }).map((_, ci) => {
+                    if (ci === half) return <td key="gap" className="bg-background w-3 border-0" />;
+                    const col = ci > half ? ci - 1 : ci;
+                    const sa = row[col];
                     if (!sa) return (
                       <td key={ci} className="border border-dashed border-muted-foreground/30 px-1.5 py-2 bg-muted/5">
                         <div className="rounded px-2 py-1 text-center text-[0.6rem] text-muted-foreground/40 font-mono">empty</div>
                       </td>
                     );
-                    const student = students.find((s) => s.id === sa.studentId);
-                    const colour = student ? branchColour[student.branch] : "";
-                    return (
-                      <td key={ci} className="border border-border px-1.5 py-2">
-                        <div className={`rounded px-2 py-1 border font-mono text-center text-[0.68rem] font-medium ${colour}`}>
-                          {student?.rollNumber || sa.seatNumber}
-                        </div>
-                      </td>
-                    );
-                  })}
-                  <td className="bg-background w-3 border-0"></td>
-                  {[3, 4, 5].map((ci) => {
-                    const sa = row[ci];
-                    if (!sa) return (
-                      <td key={ci} className="border border-dashed border-muted-foreground/30 px-1.5 py-2 bg-muted/5">
-                        <div className="rounded px-2 py-1 text-center text-[0.6rem] text-muted-foreground/40 font-mono">empty</div>
-                      </td>
-                    );
-                    const student = students.find((s) => s.id === sa.studentId);
-                    const colour = student ? branchColour[student.branch] : "";
+                    const student = students.find(s => s.id === sa.studentId);
+                    const colour  = student ? branchColour[student.branch] : "";
                     return (
                       <td key={ci} className="border border-border px-1.5 py-2">
                         <div className={`rounded px-2 py-1 border font-mono text-center text-[0.68rem] font-medium ${colour}`}>
@@ -330,6 +320,56 @@ export function SeatingAllocation() {
   const [selectedExamId, setSelectedExamId] = useState("all");
   const [selectedRoomId, setSelectedRoomId] = useState("all");
   const [allocating,     setAllocating]     = useState(false);
+  const printRef = useRef(null);
+
+  const handlePrint = () => {
+    const content = printRef.current;
+    if (!content) return;
+    const win = window.open("", "_blank", "width=1000,height=800");
+    win.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Seating Plan — ${selectedDate}</title>
+        <style>
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          body { font-family: Arial, sans-serif; font-size: 11px; color: #000; background: #fff; }
+          .print-wrapper { padding: 16px; }
+          .page-header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+          .page-header h1 { font-size: 16px; font-weight: bold; }
+          .page-header p  { font-size: 12px; margin-top: 4px; }
+          .room-card { border: 1px solid #999; margin-bottom: 24px; page-break-inside: avoid; }
+          .room-header { background: #f0f0f0; padding: 8px 12px; border-bottom: 1px solid #999; text-align: center; }
+          .room-header h2 { font-size: 14px; font-weight: bold; }
+          .room-header p  { font-size: 11px; color: #444; margin-top: 2px; }
+          .faculty-row { display: flex; justify-content: center; gap: 16px; margin-top: 6px; font-size: 11px; }
+          .faculty-badge { border: 1px solid #999; padding: 2px 10px; border-radius: 20px; }
+          .whiteboard-label { text-align: center; font-size: 10px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; color: #666; margin: 8px 0 4px; }
+          .seat-table { width: 100%; border-collapse: collapse; margin: 0 12px; width: calc(100% - 24px); }
+          .seat-table th { border: 1px solid #ccc; padding: 4px 6px; text-align: center; font-size: 10px; background: #e8e8e8; }
+          .seat-table td { border: 1px solid #ccc; padding: 4px 6px; text-align: center; font-size: 10px; }
+          .seat-cell { border-radius: 3px; padding: 2px 4px; font-family: monospace; }
+          .empty-cell { color: #bbb; font-style: italic; }
+          .gap-col { width: 12px; border: none !important; background: #fff; }
+          .summary-table { width: calc(100% - 24px); margin: 8px 12px; border-collapse: collapse; }
+          .summary-table th { border: 1px solid #ccc; padding: 4px 6px; text-align: left; font-size: 10px; background: #e8e8e8; }
+          .summary-table td { border: 1px solid #ccc; padding: 4px 6px; font-size: 10px; }
+          .total-row td { font-weight: bold; background: #f5f5f5; }
+          @media print {
+            body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            .room-card { page-break-inside: avoid; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="print-wrapper">${content.innerHTML}</div>
+      </body>
+      </html>
+    `);
+    win.document.close();
+    win.focus();
+    setTimeout(() => { win.print(); win.close(); }, 500);
+  };
 
   const examDates = useMemo(() => [...new Set(
     exams.filter(e => e.status === "scheduled" || e.status === "ongoing").map(e => e.date)
@@ -515,22 +555,37 @@ export function SeatingAllocation() {
                   </span>
                 ))}
               </div>
+              {/* Print button */}
+              <div className="mt-3">
+                <Button size="sm" variant="outline" onClick={handlePrint} className="gap-1.5">
+                  <Printer className="w-4 h-4" /> Print All Rooms
+                </Button>
+              </div>
             </div>
+            {/* Printable area */}
             <div className="border border-border rounded-b-lg bg-background p-4 space-y-6">
-              {allocatedRooms.map(({ room, allocations }) => (
-                <RoomSeatingGrid
-                  key={room.id}
-                  room={room}
-                  allocations={allocations}
-                  students={students}
-                  exam={selectedExam || examsOnDate[0]}
-                  exams={exams}
-                  invigilators={invigilationAllocations.filter(ia =>
-                    ia.roomId === room.id && examsOnDate.some(e => e.id === ia.examId)
-                  )}
-                  faculty={faculty}
-                />
-              ))}
+              <div ref={printRef}>
+                {/* Print header (hidden on screen, shown in print) */}
+                <div className="page-header hidden">
+                  <h1>Gautam Buddha University — Seating Plan</h1>
+                  <p>{selectedDate && new Date(selectedDate).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</p>
+                  <p>{examsOnDate.map(e => `${e.courseCode || e.subject} (${e.name})`).join(" | ")}</p>
+                </div>
+                {allocatedRooms.map(({ room, allocations }) => (
+                  <RoomSeatingGrid
+                    key={room.id}
+                    room={room}
+                    allocations={allocations}
+                    students={students}
+                    exam={selectedExam || examsOnDate[0]}
+                    exams={exams}
+                    invigilators={invigilationAllocations.filter(ia =>
+                      ia.roomId === room.id && examsOnDate.some(e => e.id === ia.examId)
+                    )}
+                    faculty={faculty}
+                  />
+                ))}
+              </div>
             </div>
           </TabsContent>
 

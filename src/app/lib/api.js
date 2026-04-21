@@ -1,7 +1,5 @@
 // API base URL - update this if your XAMPP path differs
-export const API_BASE = window.location.hostname === 'localhost' && window.location.port === '5174'
-  ? 'http://localhost/exam-manager/backend'
-  : 'http://localhost/exam-manager/backend';
+export const API_BASE = 'http://localhost/exam-manager/backend';
 
 function getToken() {
   return localStorage.getItem('jwt_token');
@@ -40,10 +38,15 @@ async function request(path, options = {}) {
     },
   });
 
-  const data = await res.json();
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error(`Server returned invalid response (${res.status})`);
+  }
 
   if (!res.ok) {
-    throw new Error(data.error || `Request failed: ${res.status}`);
+    throw new Error(data?.error || data?.message || `Request failed: ${res.status}`);
   }
 
   return data;
