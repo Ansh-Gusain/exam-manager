@@ -317,66 +317,250 @@ export function SeatingAllocation() {
   const { students, rooms, exams, faculty, seatingAllocations, invigilationAllocations, refreshSeating, refreshInvigilation } = useStore();
 
   const [selectedDate,   setSelectedDate]   = useState("");
+  const [selectedShift,  setSelectedShift]  = useState("");
   const [selectedExamId, setSelectedExamId] = useState("all");
   const [selectedRoomId, setSelectedRoomId] = useState("all");
   const [allocating,     setAllocating]     = useState(false);
   const printRef = useRef(null);
 
   const handlePrint = () => {
-    const content = printRef.current;
-    if (!content) return;
-    const win = window.open("", "_blank", "width=1000,height=800");
-    win.document.write(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Seating Plan — ${selectedDate}</title>
-        <style>
-          * { box-sizing: border-box; margin: 0; padding: 0; }
-          body { font-family: Arial, sans-serif; font-size: 11px; color: #000; background: #fff; }
-          .print-wrapper { padding: 16px; }
-          .page-header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #000; padding-bottom: 10px; }
-          .page-header h1 { font-size: 16px; font-weight: bold; }
-          .page-header p  { font-size: 12px; margin-top: 4px; }
-          .room-card { border: 1px solid #999; margin-bottom: 24px; page-break-inside: avoid; }
-          .room-header { background: #f0f0f0; padding: 8px 12px; border-bottom: 1px solid #999; text-align: center; }
-          .room-header h2 { font-size: 14px; font-weight: bold; }
-          .room-header p  { font-size: 11px; color: #444; margin-top: 2px; }
-          .faculty-row { display: flex; justify-content: center; gap: 16px; margin-top: 6px; font-size: 11px; }
-          .faculty-badge { border: 1px solid #999; padding: 2px 10px; border-radius: 20px; }
-          .whiteboard-label { text-align: center; font-size: 10px; font-weight: bold; letter-spacing: 2px; text-transform: uppercase; color: #666; margin: 8px 0 4px; }
-          .seat-table { width: 100%; border-collapse: collapse; margin: 0 12px; width: calc(100% - 24px); }
-          .seat-table th { border: 1px solid #ccc; padding: 4px 6px; text-align: center; font-size: 10px; background: #e8e8e8; }
-          .seat-table td { border: 1px solid #ccc; padding: 4px 6px; text-align: center; font-size: 10px; }
-          .seat-cell { border-radius: 3px; padding: 2px 4px; font-family: monospace; }
-          .empty-cell { color: #bbb; font-style: italic; }
-          .gap-col { width: 12px; border: none !important; background: #fff; }
-          .summary-table { width: calc(100% - 24px); margin: 8px 12px; border-collapse: collapse; }
-          .summary-table th { border: 1px solid #ccc; padding: 4px 6px; text-align: left; font-size: 10px; background: #e8e8e8; }
-          .summary-table td { border: 1px solid #ccc; padding: 4px 6px; font-size: 10px; }
-          .total-row td { font-weight: bold; background: #f5f5f5; }
-          @media print {
-            body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-            .room-card { page-break-inside: avoid; }
-          }
-        </style>
-      </head>
-      <body>
-        <div class="print-wrapper">${content.innerHTML}</div>
-      </body>
-      </html>
-    `);
+    if (allocatedRooms.length === 0) return;
+
+    // Build print HTML from data directly — no dependency on DOM/Tailwind classes
+    const dateStr = selectedDate
+      ? new Date(selectedDate).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })
+      : "";
+
+    // Group exams by shift for the header
+    const shiftGroups = {};
+    examsOnDate.forEach(e => {
+      const s = e.shift || "Shift 1 (Morning)";
+      if (!shiftGroups[s]) shiftGroups[s] = [];
+      shiftGroups[s].push(`${e.courseCode || e.course_code || e.subject} (${e.subject})`);
+    });
+    const examList = Object.entries(shiftGroups)
+      .map(([shift, codes]) => `${shift}: ${codes.join(", ")}`)
+      .join(" | ");
+
+    // Colour map per branch (print-safe background colours)
+    const BRANCH_COLOURS = [
+      "#dbeafe", "#dcfce7", "#ede9fe", "#ffedd5",
+      "#fce7f3", "#ccfbf1", "#fef9c3", "#fee2e2"
+    ];
+    const branchColourMap = {};
+    let colIdx = 0;
+
+    // Pre-collect all branches across all rooms
+    allocatedRooms.forEach(({ allocations }) => {
+      allocations.forEach(sa => {
+        const student = students.find(s => s.id === sa.studentId);
+        if (student && !branchColourMap[student.branch]) {
+          branchColourMap[student.branch] = BRANCH_COLOURS[colIdx++ % BRANCH_COLOURS.length];
+        }
+      });
+    });
+
+    let roomsHtml = "";
+
+    allocatedRooms.forEach(({ room, allocations }) => {
+      const COLS = Math.max(2, room.colsCount || room.cols_count || 8);
+      const half = Math.floor(COLS / 2);
+
+      // Build seat map
+      const seatMap = {};
+      allocations.forEach(sa => { seatMap[sa.seatNumber] = sa; });
+      const maxSeat = allocations.length > 0 ? Math.max(...allocations.map(s => s.seatNumber || 0)) : 0;
+
+      // Build rows
+      const rows = [];
+      for (let i = 1; i <= maxSeat; i += COLS) {
+        const row = [];
+        for (let c = 0; c < COLS; c++) {
+          const sn = i + c;
+          row.push(sn <= maxSeat ? (seatMap[sn] || null) : null);
+        }
+        rows.push(row);
+      }
+
+      // Faculty for this room
+      const roomInvig = invigilationAllocations.filter(ia =>
+        ia.roomId === room.id && examsOnDate.some(e => e.id === ia.examId)
+      );
+      const chiefFac = (() => { const ia = roomInvig.find(i => i.role === "chief"); return ia ? faculty.find(f => f.id === ia.facultyId) : null; })();
+      const asstFac  = (() => { const ia = roomInvig.find(i => i.role === "assistant"); return ia ? faculty.find(f => f.id === ia.facultyId) : null; })();
+
+      // Branch summary
+      const branches = [...new Set(allocations.map(sa => students.find(s => s.id === sa.studentId)?.branch).filter(Boolean))];
+      const branchSummary = branches.map(branch => {
+        const studs = allocations
+          .map(sa => students.find(s => s.id === sa.studentId))
+          .filter(s => s?.branch === branch)
+          .sort((a, b) => a.rollNumber.localeCompare(b.rollNumber));
+        const branchAlloc = allocations.find(sa => students.find(s => s.id === sa.studentId)?.branch === branch);
+        const branchExam  = branchAlloc ? exams.find(e => e.id === branchAlloc.examId) : null;
+        return {
+          branch,
+          from:       studs[0]?.rollNumber || "-",
+          to:         studs[studs.length - 1]?.rollNumber || "-",
+          count:      studs.length,
+          courseCode: branchExam?.courseCode || branchExam?.course_code || "-",
+          courseName: branchExam?.subject || "-",
+          semester:   branchExam?.semester || "-",
+        };
+      });
+
+      // Desk header row
+      const deskHeaders = Array.from({ length: COLS + 1 }).map((_, ci) => {
+        if (ci === half) return `<th class="gap-col"></th>`;
+        const col = ci > half ? ci - 1 : ci;
+        const isA = col % 2 === 0;
+        const deskNum = ci < half ? ci + 1 : ci - half;
+        return `<th style="background:${isA ? "#dbeafe" : "#dcfce7"};border:1px solid #ccc;padding:4px 6px;font-size:10px;text-align:center;">DESK-${deskNum}</th>`;
+      }).join("");
+
+      // Seat rows
+      const seatRows = rows.map(row => {
+        const cells = Array.from({ length: COLS + 1 }).map((_, ci) => {
+          if (ci === half) return `<td class="gap-col"></td>`;
+          const col = ci > half ? ci - 1 : ci;
+          const sa  = row[col];
+          if (!sa) return `<td style="border:1px solid #e5e7eb;padding:4px 6px;text-align:center;font-size:9px;color:#ccc;">—</td>`;
+          const student = students.find(s => s.id === sa.studentId);
+          const bg = student ? (branchColourMap[student.branch] || "#f9fafb") : "#f9fafb";
+          return `<td style="border:1px solid #ccc;padding:3px 5px;text-align:center;"><span style="display:inline-block;background:${bg};border:1px solid #ccc;border-radius:3px;padding:2px 5px;font-family:monospace;font-size:9px;font-weight:600;">${student?.rollNumber || sa.seatNumber}</span></td>`;
+        }).join("");
+        return `<tr>${cells}</tr>`;
+      }).join("");
+
+      // Summary table rows
+      const summaryRows = branchSummary.map((bs, i) => {
+        const bg = i % 2 === 0 ? "#fff" : "#f9fafb";
+        const branchBg = branchColourMap[bs.branch] || "#f3f4f6";
+        return `<tr style="background:${bg};">
+          <td style="border:1px solid #ccc;padding:4px 6px;font-family:monospace;font-weight:700;">${room.roomNumber}</td>
+          <td style="border:1px solid #ccc;padding:4px 6px;"><span style="background:${branchBg};border:1px solid #ccc;border-radius:3px;padding:1px 6px;font-size:9px;font-weight:700;">${bs.branch}</span></td>
+          <td style="border:1px solid #ccc;padding:4px 6px;text-align:center;">${bs.semester}</td>
+          <td style="border:1px solid #ccc;padding:4px 6px;font-family:monospace;font-size:9px;">${bs.from}</td>
+          <td style="border:1px solid #ccc;padding:4px 6px;font-family:monospace;font-size:9px;">${bs.to}</td>
+          <td style="border:1px solid #ccc;padding:4px 6px;text-align:center;font-weight:700;">${bs.count}</td>
+          <td style="border:1px solid #ccc;padding:4px 6px;font-family:monospace;font-size:9px;background:#f0f9ff;">${bs.courseCode}</td>
+          <td style="border:1px solid #ccc;padding:4px 6px;font-size:9px;">${bs.courseName}</td>
+        </tr>`;
+      }).join("");
+
+      const totalRow = `<tr style="background:#f5f5f5;font-weight:700;">
+        <td colspan="5" style="border:1px solid #ccc;padding:4px 6px;text-align:right;">Total</td>
+        <td style="border:1px solid #ccc;padding:4px 6px;text-align:center;">${allocations.length}</td>
+        <td colspan="2" style="border:1px solid #ccc;padding:4px 6px;"></td>
+      </tr>`;
+
+      const facultyHtml = (chiefFac || asstFac) ? `
+        <div style="display:flex;justify-content:center;gap:20px;margin-top:6px;padding-top:6px;border-top:1px solid #ddd;">
+          ${chiefFac ? `<div style="border:1px solid #999;padding:2px 12px;border-radius:3px;font-size:10px;background:#f0f4ff;"><strong>Chief:</strong> ${chiefFac.name} (${chiefFac.employeeId || chiefFac.employee_id})</div>` : ""}
+          ${asstFac  ? `<div style="border:1px solid #999;padding:2px 12px;border-radius:3px;font-size:10px;background:#f0fff4;"><strong>Assistant:</strong> ${asstFac.name} (${asstFac.employeeId || asstFac.employee_id})</div>` : ""}
+        </div>` : "";
+
+      const firstExam = examsOnDate[0];
+
+      roomsHtml += `
+        <div class="room-card">
+          <div class="room-header">
+            <div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#666;">Seating Plan (SOICT)</div>
+            <div style="font-size:15px;font-weight:bold;margin:3px 0;">Room No — ${room.roomNumber}</div>
+            <div style="font-size:11px;font-weight:600;color:#333;margin-top:2px;">${firstExam?.shift || "Second Shift"}</div>
+            <div style="font-size:10px;color:#555;">${firstExam?.date || ""}</div>
+            ${facultyHtml}
+          </div>
+          <div style="padding:10px 12px;">
+            <div style="text-align:center;font-size:9px;font-weight:bold;letter-spacing:3px;text-transform:uppercase;color:#888;margin-bottom:6px;border-bottom:1px dashed #ccc;padding-bottom:4px;">WHITE BOARD</div>
+            <table style="width:100%;border-collapse:collapse;margin-bottom:10px;">
+              <thead><tr>${deskHeaders}</tr></thead>
+              <tbody>${seatRows}</tbody>
+            </table>
+            <table style="width:100%;border-collapse:collapse;margin-top:8px;">
+              <thead>
+                <tr style="background:#e8e8e8;">
+                  <th style="border:1px solid #ccc;padding:4px 6px;text-align:left;font-size:10px;">Room No</th>
+                  <th style="border:1px solid #ccc;padding:4px 6px;text-align:left;font-size:10px;">Programme</th>
+                  <th style="border:1px solid #ccc;padding:4px 6px;text-align:center;font-size:10px;">Sem</th>
+                  <th style="border:1px solid #ccc;padding:4px 6px;text-align:left;font-size:10px;">From</th>
+                  <th style="border:1px solid #ccc;padding:4px 6px;text-align:left;font-size:10px;">To</th>
+                  <th style="border:1px solid #ccc;padding:4px 6px;text-align:center;font-size:10px;">Students</th>
+                  <th style="border:1px solid #ccc;padding:4px 6px;text-align:left;font-size:10px;">Paper Code</th>
+                  <th style="border:1px solid #ccc;padding:4px 6px;text-align:left;font-size:10px;">Course Name</th>
+                </tr>
+              </thead>
+              <tbody>${summaryRows}${totalRow}</tbody>
+            </table>
+          </div>
+        </div>`;
+    });
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <title>Seating Plan — ${selectedDate}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: Arial, sans-serif; font-size: 11px; color: #000; background: #fff; }
+    .print-wrapper { padding: 20px; }
+    .page-header { text-align: center; margin-bottom: 24px; padding-bottom: 12px; border-bottom: 2px solid #000; }
+    .page-header h1 { font-size: 18px; font-weight: bold; }
+    .page-header h2 { font-size: 14px; font-weight: normal; margin-top: 4px; }
+    .page-header p  { font-size: 11px; color: #555; margin-top: 4px; }
+    .room-card { border: 1px solid #aaa; margin-bottom: 28px; page-break-inside: avoid; }
+    .room-header { background: #f0f0f0; padding: 10px 14px; border-bottom: 1px solid #aaa; text-align: center; }
+    .gap-col { width: 14px; border: none !important; background: #fff; }
+    @media print {
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .room-card { page-break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="print-wrapper">
+    <div class="page-header">
+      <h1>Gautam Buddha University</h1>
+      <h2>Master Seating Plan</h2>
+      <p>${dateStr}</p>
+      <p style="margin-top:6px;font-size:10px;">${examList}</p>
+    </div>
+    ${roomsHtml}
+  </div>
+</body>
+</html>`;
+
+    const win = window.open("", "_blank", "width=1100,height=900");
+    win.document.write(html);
     win.document.close();
     win.focus();
-    setTimeout(() => { win.print(); win.close(); }, 500);
+    setTimeout(() => { win.print(); }, 600);
   };
 
-  const examDates = useMemo(() => [...new Set(
-    exams.filter(e => e.status === "scheduled" || e.status === "ongoing").map(e => e.date)
-  )].sort(), [exams]);
+  // Unique date+shift combinations
+  const dateShiftOptions = useMemo(() => {
+    const seen = new Set();
+    const opts = [];
+    exams
+      .filter(e => e.status === "scheduled" || e.status === "ongoing")
+      .sort((a, b) => a.date.localeCompare(b.date) || (a.shift || "").localeCompare(b.shift || ""))
+      .forEach(e => {
+        const shift = e.shift || "Shift 1 (Morning)";
+        const key   = `${e.date}||${shift}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          opts.push({ date: e.date, shift, key });
+        }
+      });
+    return opts;
+  }, [exams]);
 
+  // Exams on selected date+shift only
   const examsOnDate = useMemo(() =>
-    exams.filter(e => e.date === selectedDate), [exams, selectedDate]);
+    exams.filter(e =>
+      e.date === selectedDate &&
+      (e.shift || "Shift 1 (Morning)") === selectedShift
+    ), [exams, selectedDate, selectedShift]);
 
   const dateAllocations = useMemo(() => {
     const ids = new Set(examsOnDate.map(e => e.id));
@@ -408,13 +592,13 @@ export function SeatingAllocation() {
     sum + students.filter(s => (exam.branches||[]).includes(s.branch) && s.semester === exam.semester).length, 0);
 
   const handleAllocate = async () => {
-    if (!selectedDate) return;
+    if (!selectedDate || !selectedShift) return;
     setAllocating(true);
     try {
-      const result = await api.seating.allocateByDate(selectedDate);
+      const result = await api.seating.allocateByDate(selectedDate, selectedShift);
       await refreshSeating();
       await refreshInvigilation();
-      toast.success(result.message || `Allocated ${result.count} students on ${selectedDate}`);
+      toast.success(result.message || `Allocated ${result.count} students on ${selectedDate} — ${selectedShift}`);
       if (examsOnDate.length > 0) setSelectedExamId(examsOnDate[0].id);
     } catch (err) {
       toast.error(err.message || "Allocation failed");
@@ -424,12 +608,12 @@ export function SeatingAllocation() {
   };
 
   const handleClear = async () => {
-    if (!selectedDate) return;
+    if (!selectedDate || !selectedShift) return;
     try {
-      await api.seating.clearByDate(selectedDate);
+      await api.seating.clearByDate(selectedDate, selectedShift);
       await refreshSeating();
       setSelectedExamId("all");
-      toast.success(`Cleared all allocations for ${selectedDate}`);
+      toast.success(`Cleared allocations for ${selectedDate} — ${selectedShift}`);
     } catch (err) {
       toast.error(err.message || "Failed to clear");
     }
@@ -441,38 +625,88 @@ export function SeatingAllocation() {
 
       <Card>
         <CardContent className="py-4 px-4 space-y-4">
+
+          {/* Row 1: Date selector */}
           <div className="flex flex-col sm:flex-row gap-3 items-end">
             <div className="flex-1">
               <label className="text-[0.8rem] text-muted-foreground mb-1 block">Select Exam Date</label>
-              <Select value={selectedDate} onValueChange={v => { setSelectedDate(v); setSelectedExamId("all"); }}>
+              <Select
+                value={selectedDate}
+                onValueChange={v => { setSelectedDate(v); setSelectedShift(""); setSelectedExamId("all"); }}
+              >
                 <SelectTrigger className="text-[0.85rem]">
-                  <SelectValue placeholder="Choose a date — all exams on that day will be allocated together..." />
+                  <SelectValue placeholder="Choose a date..." />
                 </SelectTrigger>
                 <SelectContent>
-                  {examDates.map(date => {
-                    const count = exams.filter(e => e.date === date).length;
+                  {[...new Set(dateShiftOptions.map(o => o.date))].map(date => {
+                    const totalExams = exams.filter(e => e.date === date && (e.status === "scheduled" || e.status === "ongoing")).length;
                     return (
                       <SelectItem key={date} value={date}>
-                        {new Date(date).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
-                        <span className="ml-2 text-muted-foreground text-[0.75rem]">— {count} exam{count !== 1 ? "s" : ""}</span>
+                        <span className="font-medium">
+                          {new Date(date).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
+                        </span>
+                        <span className="ml-2 text-muted-foreground text-[0.75rem]">— {totalExams} exam{totalExams !== 1 ? "s" : ""}</span>
                       </SelectItem>
                     );
                   })}
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex gap-2">
-              <Button size="sm" onClick={handleAllocate} disabled={!selectedDate || allocating}>
-                <Play className="w-4 h-4 mr-1" />
-                {allocating ? "Allocating..." : "Auto Allocate All"}
-              </Button>
-              {dateAllocations.length > 0 && (
-                <Button size="sm" variant="outline" onClick={handleClear}>Clear</Button>
-              )}
-            </div>
           </div>
 
-          {selectedDate && examsOnDate.length > 0 && (
+          {/* Row 2: Shift selector (shown after date is picked) */}
+          {selectedDate && (
+            <div className="pt-3 border-t border-border">
+              <p className="text-[0.75rem] text-muted-foreground mb-2 font-medium">Select Shift</p>
+              <div className="flex flex-wrap gap-2 items-center">
+                {dateShiftOptions.filter(o => o.date === selectedDate).map(opt => {
+                  const count = exams.filter(e =>
+                    e.date === opt.date && (e.shift || "Shift 1 (Morning)") === opt.shift
+                  ).length;
+                  const isMorning = opt.shift.includes("Morning") || opt.shift.includes("1");
+                  const isSelected = selectedShift === opt.shift;
+                  return (
+                    <button
+                      key={opt.key}
+                      onClick={() => { setSelectedShift(opt.shift); setSelectedExamId("all"); }}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-[0.8rem] font-medium transition-colors ${
+                        isSelected
+                          ? isMorning
+                            ? "bg-amber-100 border-amber-400 text-amber-800"
+                            : "bg-indigo-100 border-indigo-400 text-indigo-800"
+                          : "bg-background border-border hover:bg-accent"
+                      }`}
+                    >
+                      <span>{isMorning ? "☀" : "🌙"}</span>
+                      <span>{opt.shift}</span>
+                      <span className={`text-[0.7rem] px-1.5 py-0.5 rounded-full font-semibold ${
+                        isSelected
+                          ? isMorning ? "bg-amber-200 text-amber-900" : "bg-indigo-200 text-indigo-900"
+                          : "bg-muted text-muted-foreground"
+                      }`}>
+                        {count} exam{count !== 1 ? "s" : ""}
+                      </span>
+                    </button>
+                  );
+                })}
+
+                {/* Allocate + Clear buttons */}
+                {selectedShift && (
+                  <div className="flex gap-2 ml-auto">
+                    <Button size="sm" onClick={handleAllocate} disabled={allocating}>
+                      <Play className="w-4 h-4 mr-1" />
+                      {allocating ? "Allocating..." : "Auto Allocate"}
+                    </Button>
+                    {dateAllocations.length > 0 && (
+                      <Button size="sm" variant="outline" onClick={handleClear}>Clear</Button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {selectedDate && selectedShift && examsOnDate.length > 0 && (
             <div className="pt-3 border-t border-border">
               <p className="text-[0.72rem] text-muted-foreground mb-2 font-medium">
                 Exams on {new Date(selectedDate).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long" })} — click to filter:
@@ -494,7 +728,7 @@ export function SeatingAllocation() {
             </div>
           )}
 
-          {selectedDate && (
+          {selectedDate && selectedShift && (
             <div className="flex flex-wrap gap-4 pt-3 border-t border-border text-[0.8rem]">
               <span className="flex items-center gap-1">
                 <Users className="w-3.5 h-3.5 text-muted-foreground" />
@@ -593,7 +827,14 @@ export function SeatingAllocation() {
             <div className="rounded-t-lg border border-b-0 border-border bg-gradient-to-b from-primary/10 to-primary/5 px-6 py-4 text-center">
               <p className="text-[0.65rem] text-muted-foreground uppercase tracking-[0.15em] mb-1">Gautam Buddha University</p>
               <h2 className="font-bold text-[1.15rem] mb-1">Master Seating Plan</h2>
-              <p className="text-[0.75rem] text-muted-foreground">{selectedDate}</p>
+              <p className="text-[0.75rem] text-muted-foreground">
+                {selectedDate && new Date(selectedDate).toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+              </p>
+              {selectedShift && (
+                <p className="text-[0.75rem] font-semibold mt-1">
+                  {selectedShift.includes("Morning") ? "☀ " : "🌙 "}{selectedShift}
+                </p>
+              )}
             </div>
             <div className="border border-border rounded-b-lg bg-background p-4">
               <MasterSummaryTable exam={selectedExam || examsOnDate[0]} allocatedRooms={allocatedRooms} students={students} rooms={rooms} />
@@ -601,32 +842,59 @@ export function SeatingAllocation() {
           </TabsContent>
 
           <TabsContent value="rooms">
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-4">
-              {allocatedRooms.map(({ room, studentCount }) => (
-                <Card key={room.id} className="cursor-pointer hover:border-primary/50 transition-colors" onClick={() => setSelectedRoomId(room.id)}>
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <h3 className="text-[0.9rem]">Room {room.roomNumber}</h3>
-                      <Badge variant="secondary" className="text-[0.7rem]">{room.building}</Badge>
-                    </div>
-                    <div className="flex items-center justify-between text-[0.8rem]">
-                      <span className="text-muted-foreground">Students</span>
-                      <span>{studentCount} / {room.capacity}</span>
-                    </div>
-                    <div className="mt-2 w-full bg-accent rounded-full h-2">
-                      <div className="bg-primary rounded-full h-2 transition-all" style={{ width: `${Math.min(studentCount / room.capacity * 100, 100)}%` }} />
-                    </div>
-                    <p className="text-[0.7rem] text-muted-foreground mt-1 text-right">{Math.round(studentCount / room.capacity * 100)}% utilized</p>
-                  </CardContent>
-                </Card>
-              ))}
+            <div className="mb-3 mt-4 flex items-center gap-2 text-[0.8rem] text-muted-foreground">
+              <DoorOpen className="w-4 h-4" />
+              <span>
+                {selectedShift && <span className="font-semibold text-foreground mr-1">{selectedShift} —</span>}
+                {allocatedRooms.length} room{allocatedRooms.length !== 1 ? "s" : ""} used
+              </span>
+            </div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {allocatedRooms.map(({ room, studentCount }) => {
+                // Show which exams are in this room
+                const roomExams = examsOnDate.filter(exam =>
+                  filteredAllocations.some(sa => sa.roomId === room.id && sa.examId === exam.id)
+                );
+                return (
+                  <Card key={room.id} className="cursor-pointer hover:border-primary/50 transition-colors" onClick={() => setSelectedRoomId(room.id)}>
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-[0.9rem] font-semibold">{room.roomNumber}</h3>
+                        <Badge variant="secondary" className="text-[0.7rem]">{room.building}</Badge>
+                      </div>
+                      {roomExams.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mb-2">
+                          {roomExams.map(e => (
+                            <Badge key={e.id} variant="outline" className="text-[0.65rem] font-mono">
+                              {e.courseCode || e.course_code || e.subject}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between text-[0.8rem]">
+                        <span className="text-muted-foreground">Students</span>
+                        <span>{studentCount} / {room.capacity}</span>
+                      </div>
+                      <div className="mt-2 w-full bg-accent rounded-full h-2">
+                        <div className="bg-primary rounded-full h-2 transition-all" style={{ width: `${Math.min(studentCount / room.capacity * 100, 100)}%` }} />
+                      </div>
+                      <p className="text-[0.7rem] text-muted-foreground mt-1 text-right">{Math.round(studentCount / room.capacity * 100)}% utilized</p>
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           </TabsContent>
 
           <TabsContent value="students">
             <Card className="mt-4">
               <CardHeader className="py-3 px-4">
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  {selectedShift && (
+                    <Badge className={`text-[0.7rem] ${selectedShift.includes("Morning") ? "bg-amber-100 text-amber-700" : "bg-indigo-100 text-indigo-700"}`}>
+                      {selectedShift}
+                    </Badge>
+                  )}
                   <label className="text-[0.8rem] text-muted-foreground">Filter by Room:</label>
                   <Select value={selectedRoomId} onValueChange={setSelectedRoomId}>
                     <SelectTrigger className="w-[200px] h-8 text-[0.8rem]"><SelectValue /></SelectTrigger>

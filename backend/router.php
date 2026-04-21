@@ -78,9 +78,12 @@ class Router {
         $this->add('DELETE', '/api/seating/date/{date}',        [SeatingController::class, 'clearByDate']);
 
         // Invigilation
-        $this->add('GET',    '/api/invigilation',              [InvigilationController::class, 'index']);
-        $this->add('POST',   '/api/invigilation/allocate',     [InvigilationController::class, 'allocate']);
-        $this->add('DELETE', '/api/invigilation/exam/{examId}',[InvigilationController::class, 'clearByExam']);
+        $this->add('GET',    '/api/invigilation',                    [InvigilationController::class, 'index']);
+        $this->add('POST',   '/api/invigilation/allocate',           [InvigilationController::class, 'allocate']);
+        $this->add('POST',   '/api/invigilation/allocate-by-date',   [InvigilationController::class, 'allocateByDate']);
+        $this->add('PUT',    '/api/invigilation/{id}',               [InvigilationController::class, 'updateAssignment']);
+        $this->add('POST',   '/api/invigilation/update-room',         [InvigilationController::class, 'updateRoom']);
+        $this->add('DELETE', '/api/invigilation/exam/{examId}',      [InvigilationController::class, 'clearByExam']);
 
         // Attendance
         $this->add('GET',  '/api/attendance',              [AttendanceController::class, 'index']);

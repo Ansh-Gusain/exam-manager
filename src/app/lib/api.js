@@ -111,14 +111,20 @@ export const api = {
   seating: {
     list: (params = {}) => request('/api/seating?' + new URLSearchParams(params)),
     allocate: (examId) => request('/api/seating/allocate', { method: 'POST', body: JSON.stringify({ examId: Number(examId) }) }),
-    allocateByDate: (date) => request('/api/seating/allocate-by-date', { method: 'POST', body: JSON.stringify({ date }) }),
+    allocateByDate: (date, shift) => request('/api/seating/allocate-by-date', { method: 'POST', body: JSON.stringify({ date, shift }) }),
     clearByExam: (examId) => request(`/api/seating/exam/${examId}`, { method: 'DELETE' }),
-    clearByDate: (date) => request(`/api/seating/date/${date}`, { method: 'DELETE' }),
+    clearByDate: (date, shift) => request(`/api/seating/date/${encodeURIComponent(date)}?shift=${encodeURIComponent(shift || '')}`, { method: 'DELETE' }),
   },
 
   invigilation: {
     list: (params = {}) => request('/api/invigilation?' + new URLSearchParams(params)),
     allocate: (examId) => request('/api/invigilation/allocate', { method: 'POST', body: JSON.stringify({ examId: Number(examId) }) }),
+    allocateByDate: (date) => request('/api/invigilation/allocate-by-date', { method: 'POST', body: JSON.stringify({ date }) }),
+    update: (id, facultyId) => request(`/api/invigilation/${id}`, { method: 'PUT', body: JSON.stringify({ facultyId: Number(facultyId) }) }),
+    updateRoom: (roomId, examId, chiefFacultyId, assistantFacultyId) => request('/api/invigilation/update-room', {
+      method: 'POST',
+      body: JSON.stringify({ roomId: Number(roomId), examId: Number(examId), chiefFacultyId: Number(chiefFacultyId), assistantFacultyId: Number(assistantFacultyId) })
+    }),
     clearByExam: (examId) => request(`/api/invigilation/exam/${examId}`, { method: 'DELETE' }),
   },
 

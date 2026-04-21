@@ -24,7 +24,7 @@ const EMPTY_FORM = {
 };
 
 export function RoomManagement() {
-  const { rooms, setRooms, refreshSeating } = useStore();
+  const { rooms, setRooms, refreshSeating, refreshInvigilation, refreshRooms } = useStore();
   const [search, setSearch]         = useState("");
   const [buildingFilter, setBuildingFilter] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -70,24 +70,21 @@ export function RoomManagement() {
         const oldCols = editingRoom.colsCount || editingRoom.cols_count || 8;
         const capacityChanged = oldRows !== formData.rowsCount || oldCols !== formData.colsCount;
 
-        const updated = await api.rooms.update(editingRoom.id, formData);
-        setRooms(prev => prev.map(r => r.id === editingRoom.id ? { ...r, ...updated } : r));
+        await api.rooms.update(editingRoom.id, formData);
+
+        // Always refresh rooms from server so store has latest data
+        await refreshRooms();
 
         if (capacityChanged) {
-          // Clear seating allocations for this room since layout changed
-          try {
-            await fetch(`${import.meta.env.VITE_API_BASE || 'http://localhost/exam-manager/backend'}/api/seating?roomId=${editingRoom.id}`, {
-              headers: { Authorization: `Bearer ${localStorage.getItem('jwt_token')}` }
-            });
-          } catch {}
           await refreshSeating();
-          toast.success("Room updated. Layout changed — please re-run Auto Allocate to update seating.");
+          await refreshInvigilation();
+          toast.success("Room updated. Layout changed — seating reallocated automatically.");
         } else {
           toast.success("Room updated");
         }
       } else {
-        const created = await api.rooms.create(formData);
-        setRooms(prev => [...prev, created]);
+        await api.rooms.create(formData);
+        await refreshRooms();
         toast.success("Room added");
       }
       setDialogOpen(false);
@@ -110,7 +107,7 @@ export function RoomManagement() {
     const room = rooms.find(r => r.id === id);
     if (!room) return;
     try {
-      const updated = await api.rooms.update(id, {
+      await api.rooms.update(id, {
         roomNumber:   room.roomNumber,
         building:     room.building,
         floor:        room.floor,
@@ -119,7 +116,7 @@ export function RoomManagement() {
         hasProjector: room.hasProjector || room.has_projector || false,
         isAvailable:  !(room.isAvailable ?? room.is_available),
       });
-      setRooms(prev => prev.map(r => r.id === id ? { ...r, ...updated } : r));
+      await refreshRooms();
     } catch (err) {
       toast.error(err.message || "Failed to update room");
     }
