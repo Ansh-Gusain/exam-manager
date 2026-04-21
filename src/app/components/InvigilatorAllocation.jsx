@@ -331,15 +331,7 @@ export function InvigilatorAllocation() {
             <Card>
               <CardContent className="py-12 text-center text-muted-foreground text-[0.85rem]">
                 <UserCheck className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                No invigilation assignments found for this date.
-                <p className="text-[0.75rem] mt-1">Run "Auto Allocate All" in Seating Allocation to assign faculty automatically.</p>
-              </CardContent>
-            </Card>
-          ) : (
-            <Card>
-              <CardContent className="py-12 text-center text-muted-foreground text-[0.85rem]">
-                <UserCheck className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                No invigilation assignments found for this date.
+                No invigilation assignments found for this date and shift.
                 <p className="text-[0.75rem] mt-1">Run "Auto Allocate All" in Seating Allocation to assign faculty automatically.</p>
               </CardContent>
             </Card>
