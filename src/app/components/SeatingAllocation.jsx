@@ -456,8 +456,8 @@ export function SeatingAllocation() {
 
       const facultyHtml = (chiefFac || asstFac) ? `
         <div style="display:flex;justify-content:center;gap:20px;margin-top:6px;padding-top:6px;border-top:1px solid #ddd;">
-          ${chiefFac ? `<div style="border:1px solid #999;padding:2px 12px;border-radius:3px;font-size:10px;background:#f0f4ff;"><strong>Chief:</strong> ${chiefFac.name} (${chiefFac.employeeId || chiefFac.employee_id})</div>` : ""}
-          ${asstFac  ? `<div style="border:1px solid #999;padding:2px 12px;border-radius:3px;font-size:10px;background:#f0fff4;"><strong>Assistant:</strong> ${asstFac.name} (${asstFac.employeeId || asstFac.employee_id})</div>` : ""}
+          ${chiefFac ? `<div style="border:1px solid #999;padding:2px 12px;border-radius:3px;font-size:10px;background:#f0f4ff;"><strong>Chief:</strong> ${chiefFac.name} (${chiefFac.phone || ''})</div>` : ""}
+          ${asstFac  ? `<div style="border:1px solid #999;padding:2px 12px;border-radius:3px;font-size:10px;background:#f0fff4;"><strong>Assistant:</strong> ${asstFac.name} (${asstFac.phone || ''})</div>` : ""}
         </div>` : "";
 
       const firstExam = examsOnDate[0];

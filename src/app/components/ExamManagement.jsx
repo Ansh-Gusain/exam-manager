@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useStore } from "../lib/store";
 import { api } from "../lib/api";
 import { toast } from "sonner";
@@ -15,21 +15,35 @@ import {
   Select, SelectContent, SelectItem,
   SelectTrigger, SelectValue
 } from "./ui/select";
-import { Checkbox } from "./ui/checkbox";
-import { Plus, Pencil, Trash2, Calendar, Clock, Sun, Moon } from "lucide-react";
+import { Plus, Pencil, Trash2, Calendar, Clock, Sun, Moon, X } from "lucide-react";
 
-// ── Branch list matching exact DB branch codes ──────────────────────────────
-const BRANCHES = [
-  { code: "CSE", label: "B.Tech Computer Science" },
-  { code: "AI",  label: "B.Tech Artificial Intelligence" },
-  { code: "ICS", label: "Integrated B.Tech+M.Tech CS" },
-  { code: "IT",  label: "B.Tech Information Technology" },
-  { code: "DS",  label: "B.Tech Data Science" },
-  { code: "ECE", label: "B.Tech Electronics" },
-  { code: "ML",  label: "B.Tech Machine Learning" },
-  { code: "CYS", label: "B.Tech Cyber Security" },
-  { code: "BCA", label: "Bachelor of Computer Applications" },
-];
+// ── School → Dept → Branch cascade ──────────────────────────────────────────
+const SCHOOL_DEPT_BRANCH = {
+  "SOICT": {
+    "Computer Science":       ["CSE","AI","DS","CYB","ML","ICS"],
+    "Information Technology": ["BCA","BIT"],
+    "Electronics":            ["ECE","EC-AIML"],
+  },
+  "SOM":    { "Management": ["MBA"], "Business Administration": ["BBA"] },
+  "SOE":    { "Mechanical Engineering": ["ME"], "Civil Engineering": ["CE"] },
+  "SOLGJ":  { "Law": ["LLB","BA-LLB"] },
+  "SOHSS":  { "Humanities": ["BA"], "Social Sciences": ["BSc"] },
+  "SOVSAS": { "Visual Arts": ["BFA"], "Performing Arts": ["BPA"] },
+};
+const SCHOOLS = Object.keys(SCHOOL_DEPT_BRANCH);
+
+const YEARS = ["1st Year","2nd Year","3rd Year","4th Year","5th Year"];
+const BATCHES = ["2021-2025","2022-2026","2023-2027","2024-2028","2025-2029"];
+const SEM_ROMAN = { 1:"I",2:"II",3:"III",4:"IV",5:"V",6:"VI",7:"VII",8:"VIII",9:"IX",10:"X" };
+
+// Year → allowed semesters (odd first = Aug-Dec, even second = Jan-May)
+const YEAR_SEMESTERS = {
+  "1st Year": [1, 2],
+  "2nd Year": [3, 4],
+  "3rd Year": [5, 6],
+  "4th Year": [7, 8],
+  "5th Year": [9, 10],
+};
 
 const SHIFTS = [
   { value: "Shift 1 (Morning)", label: "Shift 1 — Morning (9:00 am – 12:00 pm)", start: "09:00", end: "12:00" },
@@ -38,14 +52,12 @@ const SHIFTS = [
 
 const EMPTY_FORM = {
   name: "End Semester Examination",
-  courseCode: "",
-  subject: "",
-  date: "",
-  startTime: "09:00",
-  endTime: "12:00",
+  courseCode: "", subject: "", date: "",
+  startTime: "09:00", endTime: "12:00",
   shift: "Shift 1 (Morning)",
-  branches: [],
-  semester: 4,
+  school: "SOICT", department: "Computer Science",
+  branches: [], year: "2nd Year", semester: 4,
+  batch: "2023-2027",
   status: "scheduled",
 };
 
@@ -63,10 +75,30 @@ export function ExamManagement() {
 
   const set = (key, val) => setFormData((p) => ({ ...p, [key]: val }));
 
+  // Available depts and branches based on selected school/dept
+  const availableDepts   = Object.keys(SCHOOL_DEPT_BRANCH[formData.school] || {});
+  const availableBranches = (SCHOOL_DEPT_BRANCH[formData.school]?.[formData.department]) || [];
+
   const toggleBranch = (code) =>
     set("branches", formData.branches.includes(code)
       ? formData.branches.filter((b) => b !== code)
       : [...formData.branches, code]);
+
+  const selectSchool = (school) => {
+    const depts  = Object.keys(SCHOOL_DEPT_BRANCH[school] || {});
+    const dept   = depts[0] || "";
+    const branch = (SCHOOL_DEPT_BRANCH[school]?.[dept] || [])[0] || "";
+    setFormData(p => ({ ...p, school, department: dept, branches: [] }));
+  };
+
+  const selectDept = (dept) => {
+    setFormData(p => ({ ...p, department: dept, branches: [] }));
+  };
+
+  const selectYear = (year) => {
+    const sems = YEAR_SEMESTERS[year] || [1, 2];
+    setFormData(p => ({ ...p, year, semester: sems[0] }));
+  };
 
   const selectShift = (val) => {
     const s = SHIFTS.find((x) => x.value === val);
@@ -77,7 +109,7 @@ export function ExamManagement() {
   const openEdit = (exam) => {
     setEditingExam(exam);
     setFormData({
-      name:      exam.name,
+      name:       exam.name,
       courseCode: exam.courseCode || exam.course_code || "",
       subject:   exam.subject,
       date:      exam.date,
@@ -86,6 +118,8 @@ export function ExamManagement() {
       shift:     exam.shift      || "Shift 1 (Morning)",
       branches:  [...(exam.branches || [])],
       semester:  exam.semester,
+      year:      exam.year       || "2nd Year",
+      batch:     exam.batch      || "2023-2027",
       status:    exam.status,
     });
     setDialogOpen(true);
@@ -178,6 +212,10 @@ export function ExamManagement() {
                 <div className="flex items-center gap-2">
                   <span className="text-muted-foreground">Semester:</span>
                   <span className="font-semibold">{exam.semester}</span>
+                  {exam.batch && <>
+                    <span className="text-muted-foreground ml-2">Batch:</span>
+                    <span className="font-semibold">{exam.batch}</span>
+                  </>}
                 </div>
               </div>
 
@@ -271,46 +309,93 @@ export function ExamManagement() {
               </div>
             </div>
 
-            {/* Semester */}
-            <div>
-              <Label className="text-[0.8rem]">Semester</Label>
-              <Select value={String(formData.semester)} onValueChange={(v) => set("semester", Number(v))}>
-                <SelectTrigger className="text-[0.85rem]"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {[2, 4, 6, 8].map((s) => (
-                    <SelectItem key={s} value={String(s)}>Semester {s}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {/* School → Dept → Branch cascade */}
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="text-[0.8rem]">School</Label>
+                  <Select value={formData.school} onValueChange={selectSchool}>
+                    <SelectTrigger className="text-[0.85rem]"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {SCHOOLS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="text-[0.8rem]">Department</Label>
+                  <Select value={formData.department} onValueChange={selectDept}>
+                    <SelectTrigger className="text-[0.85rem]"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {availableDepts.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
 
-            {/* Branches */}
-            <div>
-              <Label className="text-[0.8rem] mb-2 block">
-                Branches
-                {formData.branches.length > 0 && (
-                  <span className="ml-2 text-primary font-mono text-[0.7rem]">
-                    ({formData.branches.join(", ")})
-                  </span>
-                )}
-              </Label>
-              <div className="grid grid-cols-2 gap-2">
-                {BRANCHES.map(({ code, label }) => (
-                  <label key={code} className={`flex items-center gap-2 text-[0.8rem] cursor-pointer p-2 rounded border transition-colors ${formData.branches.includes(code) ? "border-primary bg-primary/5" : "border-border hover:bg-accent"}`}>
-                    <Checkbox
-                      checked={formData.branches.includes(code)}
-                      onCheckedChange={() => toggleBranch(code)}
-                    />
-                    <span>
-                      <span className="font-mono font-bold text-primary text-[0.75rem]">{code}</span>
-                      <span className="text-muted-foreground ml-1 text-[0.68rem] block leading-tight">{label}</span>
-                    </span>
-                  </label>
-                ))}
+              {/* Branch multi-select as toggle buttons */}
+              <div>
+                <Label className="text-[0.8rem] mb-1.5 block">
+                  Branches
+                  {formData.branches.length > 0 && (
+                    <span className="ml-2 text-primary font-mono text-[0.7rem]">({formData.branches.join(", ")})</span>
+                  )}
+                </Label>
+                <div className="flex flex-wrap gap-2">
+                  {availableBranches.map(code => (
+                    <button
+                      key={code}
+                      type="button"
+                      onClick={() => toggleBranch(code)}
+                      className={`px-3 py-1.5 rounded-lg border text-[0.78rem] font-mono font-semibold transition-colors ${
+                        formData.branches.includes(code)
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-background border-border hover:bg-accent"
+                      }`}
+                    >
+                      {code}
+                    </button>
+                  ))}
+                  {formData.branches.length > 0 && (
+                    <button type="button" onClick={() => set("branches",[])} className="px-2 py-1.5 rounded-lg border border-border text-[0.72rem] text-muted-foreground hover:bg-accent">
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
-            {/* Status (edit only) */}
+            {/* Year + Semester + Batch */}
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label className="text-[0.8rem]">Year</Label>
+                <Select value={formData.year} onValueChange={selectYear}>
+                  <SelectTrigger className="text-[0.85rem]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {YEARS.map(y => <SelectItem key={y} value={y}>{y}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-[0.8rem]">Semester</Label>
+                <Select value={String(formData.semester)} onValueChange={v => set("semester", Number(v))}>
+                  <SelectTrigger className="text-[0.85rem]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {(YEAR_SEMESTERS[formData.year] || [1,2]).map(s => (
+                      <SelectItem key={s} value={String(s)}>Sem {s} ({SEM_ROMAN[s]})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-[0.8rem]">Batch</Label>
+                <Select value={formData.batch || "2023-2027"} onValueChange={v => set("batch", v)}>
+                  <SelectTrigger className="text-[0.85rem]"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {BATCHES.map(b => <SelectItem key={b} value={b}>{b}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
             {editingExam && (
               <div>
                 <Label className="text-[0.8rem]">Status</Label>

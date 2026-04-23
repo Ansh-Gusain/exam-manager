@@ -7,8 +7,8 @@ import { useAuth } from "../lib/auth-context";
 import { toast } from "sonner";
 import {
   LayoutDashboard, Users, DoorOpen, FileText, Grid3X3,
-  UserCheck, ClipboardList, RefreshCw, BarChart3, Menu,
-  LogOut, GraduationCap, UserCog, X, Loader2, Bell, ChevronRight
+  UserCheck, ClipboardList, BarChart3, Menu,
+  LogOut, GraduationCap, UserCog, X, Loader2, Bell, ChevronRight, BookOpen
 } from "lucide-react";
 
 const navGroups = [
@@ -34,7 +34,7 @@ const navGroups = [
       { path: "/admin/seating", label: "Seating Allocation", icon: Grid3X3 },
       { path: "/admin/invigilation", label: "Invigilation", icon: UserCheck },
       { path: "/admin/attendance", label: "Attendance", icon: ClipboardList },
-      { path: "/admin/replacements", label: "Replacements", icon: RefreshCw },
+      { path: "/admin/summary", label: "Summary", icon: BookOpen },
     ]
   },
   {
@@ -53,9 +53,9 @@ const pageTitles = {
   "/admin/rooms":              "Room Management",
   "/admin/exams":              "Exam Management",
   "/admin/seating":            "Seating Allocation",
-  "/admin/invigilation":       "Invigilator Allocation",
+  "/admin/invigilation":       "Invigilation Management",
   "/admin/attendance":         "Attendance Management",
-  "/admin/replacements":       "Replacement Management",
+  "/admin/summary":            "Summary",
   "/admin/reports":            "Reports & Analytics",
 };
 
@@ -141,11 +141,6 @@ export function Layout() {
                 >
                   <item.icon className="w-4 h-4 shrink-0" />
                   <span className="flex-1 truncate">{item.label}</span>
-                  {item.path === "/admin/replacements" && pendingReplacements > 0 && (
-                    <span className="bg-destructive text-destructive-foreground text-[0.6rem] font-bold px-1.5 py-0.5 rounded-full">
-                      {pendingReplacements}
-                    </span>
-                  )}
                 </NavLink>
               ))}
             </div>

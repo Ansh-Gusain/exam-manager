@@ -31,6 +31,7 @@ class ExamController {
             $r['startTime']  = $r['start_time'];
             $r['endTime']    = $r['end_time'];
             $r['courseCode'] = $r['course_code'];
+            $r['batch']      = $r['batch'] ?? null;
         }
         jsonResponse($rows);
     }
@@ -45,8 +46,8 @@ class ExamController {
 
         $db   = getDB();
         $stmt = $db->prepare('
-            INSERT INTO exams (name, course_code, subject, date, start_time, end_time, shift, branches, semester, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO exams (name, course_code, subject, date, start_time, end_time, shift, branches, semester, batch, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ');
         $stmt->execute([
             $data['name'],
@@ -57,9 +58,9 @@ class ExamController {
             $data['shift'] ?? 'Shift 1 (Morning)',
             json_encode($data['branches']),
             $data['semester'],
+            $data['batch'] ?? null,
             $data['status'] ?? 'scheduled'
         ]);
-
         jsonResponse($this->findOrFail($db->lastInsertId()), 201);
     }
 
@@ -71,7 +72,7 @@ class ExamController {
         $db   = getDB();
         $stmt = $db->prepare('
             UPDATE exams SET name=?, course_code=?, subject=?, date=?, start_time=?, end_time=?,
-            shift=?, branches=?, semester=?, status=? WHERE id=?
+            shift=?, branches=?, semester=?, batch=?, status=? WHERE id=?
         ');
         $stmt->execute([
             $data['name'],
@@ -82,6 +83,7 @@ class ExamController {
             $data['shift'] ?? 'Shift 1 (Morning)',
             json_encode($data['branches']),
             $data['semester'],
+            $data['batch'] ?? null,
             $data['status'] ?? 'scheduled',
             $params['id']
         ]);
@@ -104,6 +106,7 @@ class ExamController {
         $row['startTime']  = $row['start_time'];
         $row['endTime']    = $row['end_time'];
         $row['courseCode'] = $row['course_code'];
+        $row['batch']      = $row['batch'] ?? null;
         return $row;
     }
 

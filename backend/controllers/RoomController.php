@@ -97,103 +97,219 @@ class RoomController {
             return;
         }
 
-        // ── Layout changed: re-seat same students with new grid, keep same faculty ──
-
-        // Get all exam_ids that had allocations in this room
-        $stmt = $db->prepare('SELECT DISTINCT exam_id FROM seating_allocations WHERE room_id = ?');
+        // Layout changed — find all dates that had allocations in this room
+        // and trigger a full re-allocation for each date+shift combination
+        $stmt = $db->prepare('
+            SELECT DISTINCT e.date, e.shift
+            FROM seating_allocations sa
+            JOIN exams e ON sa.exam_id = e.id
+            WHERE sa.room_id = ?
+            ORDER BY e.date, e.shift
+        ');
         $stmt->execute([$params['id']]);
-        $examIds = array_column($stmt->fetchAll(), 'exam_id');
+        $affectedShifts = $stmt->fetchAll();
 
-        if (empty($examIds)) {
-            jsonResponse($this->findOrFail($params['id']));
+        if (empty($affectedShifts)) {
+            $room = $this->findOrFail($params['id']);
+            $room['reallocated'] = false;
+            jsonResponse($room);
             return;
         }
 
-        // Remember existing faculty assignments for this room BEFORE deleting
-        $stmt = $db->prepare('SELECT exam_id, faculty_id, role FROM invigilation_allocations WHERE room_id = ?');
-        $stmt->execute([$params['id']]);
-        $existingFaculty = $stmt->fetchAll(); // keep these exactly
+        // Re-run full allocateByDate for each affected date+shift
+        $reallocatedDates = [];
+        foreach ($affectedShifts as $ds) {
+            $this->reallocateShift($db, $ds['date'], $ds['shift']);
+            $reallocatedDates[] = "{$ds['date']} {$ds['shift']}";
+        }
 
-        $db->beginTransaction();
+        $room = $this->findOrFail($params['id']);
+        $room['reallocated']      = true;
+        $room['reallocatedShifts'] = $reallocatedDates;
+        jsonResponse($room);
+    }
+
+    // Full re-allocation for a date+shift: seating + invigilation
+    private function reallocateShift(PDO $db, string $date, string $shift): void {
+        // Load exams for this date+shift
+        $stmt = $db->prepare("SELECT * FROM exams WHERE date = ? AND shift = ? AND status != 'completed' ORDER BY id");
+        $stmt->execute([$date, $shift]);
+        $exams = $stmt->fetchAll();
+        if (empty($exams)) return;
+
+        foreach ($exams as &$e) {
+            $e['branches']    = json_decode($e['branches'], true) ?? [];
+            $e['course_code'] = $e['course_code'] ?? $e['subject'];
+        }
+        unset($e);
+
+        $stmt = $db->prepare('SELECT * FROM rooms WHERE is_available = 1 ORDER BY room_number');
+        $stmt->execute();
+        $rooms = $stmt->fetchAll();
+        if (empty($rooms)) return;
+
+        // Clear existing seating + invigilation for these exams
+        $examIds = array_column($exams, 'id');
+        $ph = implode(',', array_fill(0, count($examIds), '?'));
+
+        // Decrement duties before clearing invigilation
+        $db->prepare("
+            UPDATE faculty f
+            JOIN invigilation_allocations ia ON ia.faculty_id = f.id
+            SET f.total_duties = GREATEST(0, f.total_duties - 1)
+            WHERE ia.exam_id IN ($ph)
+        ")->execute($examIds);
+        $db->prepare("DELETE FROM invigilation_allocations WHERE exam_id IN ($ph)")->execute($examIds);
+        $db->prepare("DELETE FROM seating_allocations WHERE exam_id IN ($ph)")->execute($examIds);
 
         $insertSeat = $db->prepare('INSERT INTO seating_allocations (exam_id, room_id, student_id, seat_number) VALUES (?, ?, ?, ?)');
 
-        $COLS    = max(2, $cols);
-        if ($COLS % 2 !== 0) $COLS--;
-        $numRows = (int)ceil($newCapacity / $COLS);
+        // Group exams by shift (only one shift here)
+        $byShift = [$shift => $exams];
 
-        // Collect ALL students across ALL exams in this room, grouped by exam then branch
-        // This preserves the original pairing: ExamA branch on even cols, ExamB branch on odd cols
-        $examStudents = []; // examId => [branch => [students]]
-        foreach ($examIds as $examId) {
-            $stmt = $db->prepare('
-                SELECT s.* FROM seating_allocations sa
-                JOIN students s ON sa.student_id = s.id
-                WHERE sa.exam_id = ? AND sa.room_id = ?
-                ORDER BY s.branch, s.roll_number
-            ');
-            $stmt->execute([$examId, $params['id']]);
-            $studs = $stmt->fetchAll();
-            $byBranch = [];
-            foreach ($studs as $s) { $byBranch[$s['branch']][] = $s; }
-            $examStudents[$examId] = $byBranch;
-        }
+        $db->beginTransaction();
+        $roomIndex = 0;
 
-        // Delete old seating for this room (keep invigilation for now)
-        $db->prepare('DELETE FROM seating_allocations WHERE room_id = ?')->execute([$params['id']]);
-
-        // Determine ExamA and ExamB (same pairing as original)
-        $examIdA = $examIds[0];
-        $examIdB = isset($examIds[1]) ? $examIds[1] : null;
-
-        $branchKeysA = array_values(array_keys($examStudents[$examIdA] ?? []));
-        $branchKeysB = $examIdB ? array_values(array_keys($examStudents[$examIdB] ?? [])) : [];
-
-        // Use first branch from each exam (this room had 1 branch per exam)
-        $studA = !empty($branchKeysA) ? array_values($examStudents[$examIdA][$branchKeysA[0]]) : [];
-        $studB = ($examIdB && !empty($branchKeysB)) ? array_values($examStudents[$examIdB][$branchKeysB[0]]) : [];
-
-        // Build grid: even cols = ExamA, odd cols = ExamB
-        $grid = array_fill(0, $numRows, array_fill(0, $COLS, null));
-        $pA = 0; $pB = 0;
-        for ($col = 0; $col < $COLS; $col++) {
-            $isA = ($col % 2 === 0);
-            for ($row = 0; $row < $numRows; $row++) {
-                if ($isA && $pA < count($studA)) {
-                    $grid[$row][$col] = ['eid' => $examIdA, 'student' => $studA[$pA++]];
-                } elseif (!$isA && $pB < count($studB)) {
-                    $grid[$row][$col] = ['eid' => $examIdB, 'student' => $studB[$pB++]];
+        foreach ($byShift as $shiftName => $shiftExams) {
+            $examStudents = [];
+            foreach ($shiftExams as $exam) {
+                if (empty($exam['branches'])) continue;
+                $ph2    = implode(',', array_fill(0, count($exam['branches']), '?'));
+                $params = [...$exam['branches'], $exam['semester']];
+                $extra  = '';
+                if (!empty($exam['batch'])) {
+                    $extra    = ' AND batch = ?';
+                    $params[] = $exam['batch'];
                 }
+                $s = $db->prepare("SELECT * FROM students WHERE branch IN ($ph2) AND semester = ?$extra ORDER BY branch, roll_number");
+                $s->execute($params);
+                $examStudents[$exam['id']] = $s->fetchAll();
             }
-        }
 
-        // Insert new seat allocations
-        $seatNum = 1;
-        for ($row = 0; $row < $numRows; $row++) {
-            for ($col = 0; $col < $COLS; $col++) {
-                if ($seatNum > $newCapacity) break;
-                $cell = $grid[$row][$col];
-                if ($cell !== null) {
-                    $insertSeat->execute([$cell['eid'], $params['id'], $cell['student']['id'], $seatNum]);
+            $examIds2  = array_keys($examStudents);
+            $codeOf    = [];
+            $subjectOf = [];
+            foreach ($shiftExams as $ex) {
+                $codeOf[$ex['id']]    = strtoupper(trim($ex['course_code'] ?? $ex['subject']));
+                $subjectOf[$ex['id']] = strtolower(trim($ex['subject']));
+            }
+
+            $paired = [];
+            $used   = [];
+            foreach ($examIds2 as $idA) {
+                if (isset($used[$idA])) continue;
+                $pw = null;
+                foreach ($examIds2 as $idB) {
+                    if ($idB === $idA || isset($used[$idB])) continue;
+                    if ($codeOf[$idA] !== $codeOf[$idB] && $subjectOf[$idA] !== $subjectOf[$idB]) {
+                        $pw = $idB; $used[$idB] = true; break;
+                    }
                 }
-                $seatNum++;
+                $used[$idA] = true;
+                $paired[]   = [$idA, $pw];
             }
-        }
 
-        // Restore the SAME faculty (delete and re-insert to avoid duplicates)
-        $db->prepare('DELETE FROM invigilation_allocations WHERE room_id = ?')->execute([$params['id']]);
-        if (!empty($existingFaculty)) {
-            $reInsert = $db->prepare('INSERT IGNORE INTO invigilation_allocations (exam_id, room_id, faculty_id, role) VALUES (?, ?, ?, ?)');
-            foreach ($existingFaculty as $f) {
-                $reInsert->execute([$f['exam_id'], $params['id'], $f['faculty_id'], $f['role']]);
+            foreach ($paired as [$examIdA, $examIdB]) {
+                $studentsA = $examStudents[$examIdA] ?? [];
+                $studentsB = $examIdB ? ($examStudents[$examIdB] ?? []) : [];
+                $hasB      = !empty($studentsB);
+
+                $branchesA = [];
+                foreach ($studentsA as $s) { $branchesA[$s['branch']][] = $s; }
+                $branchesB = [];
+                foreach ($studentsB as $s) { $branchesB[$s['branch']][] = $s; }
+
+                $branchKeysA = array_values(array_keys($branchesA));
+                $branchKeysB = array_values(array_keys($branchesB));
+                $maxBranches = max(count($branchKeysA), count($branchKeysB) ?: 0);
+
+                for ($bi = 0; $bi < $maxBranches; $bi++) {
+                    $branchA  = $branchKeysA[$bi] ?? null;
+                    $branchB  = $hasB ? ($branchKeysB[$bi] ?? null) : null;
+                    $colStudA = $branchA ? $branchesA[$branchA] : [];
+                    $colStudB = $branchB ? $branchesB[$branchB] : [];
+                    if (empty($colStudA) && empty($colStudB)) continue;
+
+                    $ptrA = 0; $ptrB = 0;
+                    while ($ptrA < count($colStudA) || $ptrB < count($colStudB)) {
+                        if ($roomIndex >= count($rooms)) break;
+                        $room     = $rooms[$roomIndex++];
+                        $capacity = (int)$room['capacity'];
+                        $COLS     = max(2, (int)($room['cols_count'] ?? 8));
+                        if ($COLS % 2 !== 0) $COLS--;
+                        $numRows  = (int)ceil($capacity / $COLS);
+
+                        $grid = array_fill(0, $numRows, array_fill(0, $COLS, null));
+                        for ($col = 0; $col < $COLS; $col++) {
+                            $isA = ($col % 2 === 0);
+                            for ($row = 0; $row < $numRows; $row++) {
+                                if ($isA && $ptrA < count($colStudA)) {
+                                    $grid[$row][$col] = ['eid' => $examIdA, 'student' => $colStudA[$ptrA++]];
+                                } elseif (!$isA && $ptrB < count($colStudB)) {
+                                    $grid[$row][$col] = ['eid' => $examIdB, 'student' => $colStudB[$ptrB++]];
+                                }
+                            }
+                        }
+
+                        $seatNum = 1;
+                        for ($row = 0; $row < $numRows; $row++) {
+                            for ($col = 0; $col < $COLS; $col++) {
+                                if ($seatNum > $capacity) break;
+                                $cell = $grid[$row][$col];
+                                if ($cell !== null) {
+                                    $insertSeat->execute([$cell['eid'], $room['id'], $cell['student']['id'], $seatNum]);
+                                }
+                                $seatNum++;
+                            }
+                        }
+                    }
+                }
             }
         }
 
         $db->commit();
 
-        $room = $this->findOrFail($params['id']);
-        $room['reallocated'] = count($examIds);
-        jsonResponse($room);
+        // Re-assign invigilation
+        $invigilInsert = $db->prepare('INSERT IGNORE INTO invigilation_allocations (exam_id, room_id, faculty_id, role) VALUES (?, ?, ?, ?)');
+        $dutyUpdate    = $db->prepare('UPDATE faculty SET total_duties = total_duties + 1 WHERE id = ?');
+
+        $shiftExamIds = array_column($exams, 'id');
+        $ph3 = implode(',', array_fill(0, count($shiftExamIds), '?'));
+        $stmt = $db->prepare("
+            SELECT sa.room_id, MIN(sa.exam_id) as primary_exam_id
+            FROM seating_allocations sa
+            WHERE sa.exam_id IN ($ph3)
+            GROUP BY sa.room_id ORDER BY sa.room_id
+        ");
+        $stmt->execute($shiftExamIds);
+        $shiftRooms = $stmt->fetchAll();
+
+        $stmt = $db->prepare('SELECT * FROM faculty WHERE is_available = 1 ORDER BY total_duties ASC, RAND()');
+        $stmt->execute();
+        $allFac = $stmt->fetchAll();
+
+        $db->beginTransaction();
+        $assignedThisShift = [];
+        $fi = 0;
+        foreach ($shiftRooms as $roomRow) {
+            $roomId        = $roomRow['room_id'];
+            $primaryExamId = $roomRow['primary_exam_id'];
+
+            while ($fi < count($allFac) && isset($assignedThisShift[$allFac[$fi]['id']])) $fi++;
+            if ($fi >= count($allFac)) break;
+            $chief = $allFac[$fi++];
+            $invigilInsert->execute([$primaryExamId, $roomId, $chief['id'], 'chief']);
+            $dutyUpdate->execute([$chief['id']]);
+            $assignedThisShift[$chief['id']] = true;
+
+            while ($fi < count($allFac) && isset($assignedThisShift[$allFac[$fi]['id']])) $fi++;
+            if ($fi >= count($allFac)) break;
+            $asst = $allFac[$fi++];
+            $invigilInsert->execute([$primaryExamId, $roomId, $asst['id'], 'assistant']);
+            $dutyUpdate->execute([$asst['id']]);
+            $assignedThisShift[$asst['id']] = true;
+        }
+        $db->commit();
     }
 
     public function destroy(array $params): void {
@@ -223,6 +339,11 @@ class RoomController {
         if (empty($data['rowsCount']) || empty($data['colsCount'])) {
             errorResponse("Rows and columns are required");
         }
+        $cols = (int)$data['colsCount'];
+        if ($cols < 2) errorResponse("Columns must be at least 2");
+        if ($cols % 2 !== 0) errorResponse("Columns must be an even number (for exam A/B alternating layout)");
+        $rows = (int)$data['rowsCount'];
+        if ($rows < 1) errorResponse("Rows must be at least 1");
     }
 }
 

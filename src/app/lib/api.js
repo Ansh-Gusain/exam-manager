@@ -91,6 +91,7 @@ export const api = {
     update: (id, data) => request(`/api/faculty/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (id) => request(`/api/faculty/${id}`, { method: 'DELETE' }),
     bulk: (faculty) => request('/api/faculty/bulk', { method: 'POST', body: JSON.stringify({ faculty }) }),
+    setLeave: (id, status, reason) => request(`/api/faculty/${id}/leave`, { method: 'POST', body: JSON.stringify({ status, reason }) }),
   },
 
   rooms: {

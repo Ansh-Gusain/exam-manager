@@ -37,7 +37,7 @@ class ReportController {
     public function facultyDuties(array $params): void {
         $db   = getDB();
         $stmt = $db->query('
-            SELECT f.id, f.name, f.employee_id, f.school, f.department,
+            SELECT f.id, f.name, f.phone, f.school, f.department,
                    f.total_duties, f.is_available,
                    COUNT(ia.id) AS current_allocations
             FROM faculty f
@@ -97,3 +97,4 @@ class ReportController {
         ]);
     }
 }
+

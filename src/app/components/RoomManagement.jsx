@@ -78,7 +78,7 @@ export function RoomManagement() {
         if (capacityChanged) {
           await refreshSeating();
           await refreshInvigilation();
-          toast.success("Room updated. Layout changed — seating reallocated automatically.");
+          toast.success("Room updated — full re-allocation done for all affected dates.");
         } else {
           toast.success("Room updated");
         }
@@ -93,7 +93,13 @@ export function RoomManagement() {
     }
   };
 
+  // Reset form when dialog closes
+  const handleDialogChange = (open) => {
+    if (!open) { setEditingRoom(null); setFormData(EMPTY_FORM); }
+    setDialogOpen(open);
+  };
   const handleDelete = async (id) => {
+    if (!window.confirm("Delete this room? This will also remove all seating and invigilation allocations for this room.")) return;
     try {
       await api.rooms.delete(id);
       setRooms(prev => prev.filter(r => r.id !== id));
@@ -234,7 +240,7 @@ export function RoomManagement() {
       </div>
 
       {/* Add/Edit Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog open={dialogOpen} onOpenChange={handleDialogChange}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>{editingRoom ? "Edit Room" : "Add New Room"}</DialogTitle>

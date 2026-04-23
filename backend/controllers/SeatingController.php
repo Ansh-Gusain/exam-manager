@@ -34,20 +34,39 @@ class SeatingController {
         jsonResponse($stmt->fetchAll());
     }
 
+    // Helper: load students for an exam, filtering by branch + semester + batch (if set)
+    private function loadStudentsForExam(PDO $db, array $exam, mixed $examIdTag): array {
+        if (empty($exam['branches'])) return [];
+        $ph     = implode(',', array_fill(0, count($exam['branches']), '?'));
+        $params = [$examIdTag, ...$exam['branches'], $exam['semester']];
+        $extra  = '';
+        if (!empty($exam['batch'])) {
+            $extra    = ' AND batch = ?';
+            $params[] = $exam['batch'];
+        }
+        $stmt = $db->prepare("
+            SELECT *, ? AS exam_id_tag FROM students
+            WHERE branch IN ($ph) AND semester = ?$extra
+            ORDER BY roll_number
+        ");
+        $stmt->execute($params);
+        return $stmt->fetchAll();
+    }
+
     public function allocate(array $params): void {
         $data = getBody();
         if (empty($data['examId'])) errorResponse('examId is required');
 
         $db = getDB();
 
-        // â”€â”€ Load the requested exam â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // Load the requested exam
         $stmt = $db->prepare('SELECT * FROM exams WHERE id = ?');
         $stmt->execute([$data['examId']]);
         $exam = $stmt->fetch();
         if (!$exam) errorResponse('Exam not found', 404);
         $exam['branches'] = json_decode($exam['branches'], true) ?? [];
 
-        // â”€â”€ Find a partner exam: same date + same shift, different id â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // Find a partner exam: same date + same shift, different id
         $stmt = $db->prepare("
             SELECT * FROM exams
             WHERE date = ? AND shift = ? AND id != ? AND status != 'completed'
@@ -60,45 +79,25 @@ class SeatingController {
             $partnerExam['branches'] = json_decode($partnerExam['branches'], true) ?? [];
         }
 
-        // â”€â”€ Load eligible students for THIS exam â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        $placeholders = implode(',', array_fill(0, count($exam['branches']), '?'));
-        $stmt = $db->prepare("
-            SELECT *, ? AS exam_id_tag FROM students
-            WHERE branch IN ($placeholders) AND semester = ?
-            ORDER BY roll_number
-        ");
-        $stmt->execute([$exam['id'], ...$exam['branches'], $exam['semester']]);
-        $examAStudents = $stmt->fetchAll();
-
-        // â”€â”€ Load eligible students for PARTNER exam (if exists) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        $examBStudents = [];
-        if ($partnerExam) {
-            $ph2 = implode(',', array_fill(0, count($partnerExam['branches']), '?'));
-            $stmt = $db->prepare("
-                SELECT *, ? AS exam_id_tag FROM students
-                WHERE branch IN ($ph2) AND semester = ?
-                ORDER BY roll_number
-            ");
-            $stmt->execute([$partnerExam['id'], ...$partnerExam['branches'], $partnerExam['semester']]);
-            $examBStudents = $stmt->fetchAll();
-        }
+        // Load eligible students — filtered by branch + semester + batch
+        $examAStudents = $this->loadStudentsForExam($db, $exam, $exam['id']);
+        $examBStudents = $partnerExam ? $this->loadStudentsForExam($db, $partnerExam, $partnerExam['id']) : [];
 
         if (empty($examAStudents)) {
             errorResponse('No eligible students found for this exam');
         }
 
-        // â”€â”€ Load available rooms â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // Load available rooms
         $stmt = $db->prepare('SELECT * FROM rooms WHERE is_available = 1 ORDER BY room_number');
         $stmt->execute();
         $rooms = $stmt->fetchAll();
 
         $totalCapacity = array_sum(array_column($rooms, 'capacity'));
-        $totalStudents = count($examAStudents) + count($examBStudents);
         if ($totalCapacity < count($examAStudents)) {
             errorResponse("Insufficient room capacity for " . count($examAStudents) . " students.");
         }
 
-        // â”€â”€ Clear existing allocations for THIS exam â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // Clear existing allocations for THIS exam
         $db->prepare('DELETE FROM seating_allocations WHERE exam_id = ?')->execute([$exam['id']]);
 
         $insertStmt = $db->prepare('
@@ -107,77 +106,49 @@ class SeatingController {
         ');
 
         $db->beginTransaction();
-        $allocated = 0;
-        $ptrA = 0;
-        $ptrB = 0; // pointer into examBStudents
-
+        $allocated  = 0;
+        $ptrA       = 0;
+        $ptrB       = 0;
         $hasPartner = !empty($examBStudents);
 
         foreach ($rooms as $room) {
             if ($ptrA >= count($examAStudents)) break;
 
-            // Use room's own cols_count (must be even), fallback to 6
-            $COLS     = max(2, (int)($room['cols_count'] ?? 8));
+            $COLS    = max(2, (int)($room['cols_count'] ?? 8));
             if ($COLS % 2 !== 0) $COLS--;
             $capacity = (int)$room['capacity'];
             $numRows  = (int)ceil($capacity / $COLS);
 
-            // Build grid [row][col] â€” null = empty seat
             $grid = array_fill(0, $numRows, array_fill(0, $COLS, null));
 
             for ($col = 0; $col < $COLS; $col++) {
-                $isExamACol = ($col % 2 === 0); // cols 0,2,4 â†’ Exam A
-
+                $isExamACol = ($col % 2 === 0);
                 for ($row = 0; $row < $numRows; $row++) {
                     if ($isExamACol) {
-                        // Place Exam A student
                         if ($ptrA < count($examAStudents)) {
-                            $grid[$row][$col] = [
-                                'student'  => $examAStudents[$ptrA],
-                                'exam_id'  => $exam['id'],
-                            ];
+                            $grid[$row][$col] = ['student' => $examAStudents[$ptrA], 'exam_id' => $exam['id']];
                             $ptrA++;
                         }
                     } else {
-                        // Place Exam B student (or leave empty if no partner)
                         if ($hasPartner && $ptrB < count($examBStudents)) {
-                            $grid[$row][$col] = [
-                                'student'  => $examBStudents[$ptrB],
-                                'exam_id'  => $partnerExam['id'],
-                            ];
+                            $grid[$row][$col] = ['student' => $examBStudents[$ptrB], 'exam_id' => $partnerExam['id']];
                             $ptrB++;
                         }
-                        // else: null = empty gap seat
                     }
                 }
             }
 
-            // Insert row-by-row, seat numbers 1..capacity
             $seatNumber = 1;
             for ($row = 0; $row < $numRows; $row++) {
                 for ($col = 0; $col < $COLS; $col++) {
                     if ($seatNumber > $capacity) break;
                     $cell = $grid[$row][$col];
                     if ($cell !== null) {
-                        // Only insert for THIS exam (partner exam handles its own allocation)
                         if ((int)$cell['exam_id'] === (int)$exam['id']) {
-                            $insertStmt->execute([
-                                $exam['id'],
-                                $room['id'],
-                                $cell['student']['id'],
-                                $seatNumber
-                            ]);
+                            $insertStmt->execute([$exam['id'], $room['id'], $cell['student']['id'], $seatNumber]);
                             $allocated++;
-                        }
-                        // Also insert partner exam students so the room grid is complete
-                        elseif ($partnerExam && (int)$cell['exam_id'] === (int)$partnerExam['id']) {
-                            // Check if partner already allocated in this room/seat
-                            $insertStmt->execute([
-                                $partnerExam['id'],
-                                $room['id'],
-                                $cell['student']['id'],
-                                $seatNumber
-                            ]);
+                        } elseif ($partnerExam && (int)$cell['exam_id'] === (int)$partnerExam['id']) {
+                            $insertStmt->execute([$partnerExam['id'], $room['id'], $cell['student']['id'], $seatNumber]);
                         }
                     }
                     $seatNumber++;
@@ -186,7 +157,6 @@ class SeatingController {
         }
         $db->commit();
 
-        // â”€â”€ Return allocations for THIS exam â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         $stmt = $db->prepare('
             SELECT sa.*, s.roll_number, s.branch
             FROM seating_allocations sa
@@ -220,7 +190,16 @@ class SeatingController {
         $date  = $params['date'];
         $shift = getQuery()['shift'] ?? null;
 
+        // Decrement duties for faculty assigned to these exams before cascade-delete
         if ($shift) {
+            $db->prepare("
+                UPDATE faculty f
+                JOIN invigilation_allocations ia ON ia.faculty_id = f.id
+                JOIN exams e ON ia.exam_id = e.id
+                SET f.total_duties = GREATEST(0, f.total_duties - 1)
+                WHERE e.date = ? AND e.shift = ?
+            ")->execute([$date, $shift]);
+
             $stmt = $db->prepare('
                 DELETE sa FROM seating_allocations sa
                 JOIN exams e ON sa.exam_id = e.id
@@ -228,6 +207,14 @@ class SeatingController {
             ');
             $stmt->execute([$date, $shift]);
         } else {
+            $db->prepare("
+                UPDATE faculty f
+                JOIN invigilation_allocations ia ON ia.faculty_id = f.id
+                JOIN exams e ON ia.exam_id = e.id
+                SET f.total_duties = GREATEST(0, f.total_duties - 1)
+                WHERE e.date = ?
+            ")->execute([$date]);
+
             $stmt = $db->prepare('
                 DELETE sa FROM seating_allocations sa
                 JOIN exams e ON sa.exam_id = e.id
@@ -238,18 +225,15 @@ class SeatingController {
         jsonResponse(['message' => 'Seating allocations cleared']);
     }
 
-    // â”€â”€ Allocate ALL exams on a given date across shifts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
     // Allocate ALL exams on a given date across shifts
     public function allocateByDate(array $params): void {
         $data  = getBody();
         if (empty($data['date'])) errorResponse('date is required (YYYY-MM-DD)');
         $date  = $data['date'];
-        $shift = $data['shift'] ?? null; // if provided, only allocate this shift
+        $shift = $data['shift'] ?? null;
 
         $db = getDB();
 
-        // Load exams — filter by shift if provided
         if ($shift) {
             $stmt = $db->prepare("SELECT * FROM exams WHERE date = ? AND shift = ? AND status != 'completed' ORDER BY id");
             $stmt->execute([$date, $shift]);
@@ -266,19 +250,16 @@ class SeatingController {
         }
         unset($e);
 
-        // Load available rooms ordered by room_number
         $stmt = $db->prepare('SELECT * FROM rooms WHERE is_available = 1 ORDER BY room_number');
         $stmt->execute();
         $rooms = $stmt->fetchAll();
         if (empty($rooms)) errorResponse('No available rooms');
 
-        // Group exams by shift
         $byShift = [];
         foreach ($exams as $e) {
             $byShift[$e['shift'] ?? 'Shift 1 (Morning)'][] = $e;
         }
 
-        // Clear existing allocations for this date+shift only
         $examIds = array_column($exams, 'id');
         if (!empty($examIds)) {
             $ph = implode(',', array_fill(0, count($examIds), '?'));
@@ -290,17 +271,23 @@ class SeatingController {
         $summary    = [];
 
         $db->beginTransaction();
-        $roomIndex = 0; // shared across ALL shifts — each shift gets its own rooms
+        $roomIndex = 0;
 
-        foreach ($byShift as $shift => $shiftExams) {
+        foreach ($byShift as $shiftName => $shiftExams) {
 
-            // Load eligible students per exam
+            // Load eligible students per exam — filtered by branch + semester + batch
             $examStudents = [];
             foreach ($shiftExams as $exam) {
                 if (empty($exam['branches'])) continue;
-                $ph = implode(',', array_fill(0, count($exam['branches']), '?'));
-                $s  = $db->prepare("SELECT * FROM students WHERE branch IN ($ph) AND semester = ? ORDER BY branch, roll_number");
-                $s->execute([...$exam['branches'], $exam['semester']]);
+                $ph     = implode(',', array_fill(0, count($exam['branches']), '?'));
+                $params = [...$exam['branches'], $exam['semester']];
+                $extra  = '';
+                if (!empty($exam['batch'])) {
+                    $extra    = ' AND batch = ?';
+                    $params[] = $exam['batch'];
+                }
+                $s = $db->prepare("SELECT * FROM students WHERE branch IN ($ph) AND semester = ?$extra ORDER BY branch, roll_number");
+                $s->execute($params);
                 $examStudents[$exam['id']] = $s->fetchAll();
             }
 
@@ -330,13 +317,11 @@ class SeatingController {
                 $paired[]   = [$idA, $pw];
             }
 
-            // Allocate each pair
             foreach ($paired as [$examIdA, $examIdB]) {
                 $studentsA = $examStudents[$examIdA] ?? [];
                 $studentsB = $examIdB ? ($examStudents[$examIdB] ?? []) : [];
                 $hasB      = !empty($studentsB);
 
-                // Group by branch
                 $branchesA = [];
                 foreach ($studentsA as $s) { $branchesA[$s['branch']][] = $s; }
                 $branchesB = [];
@@ -346,7 +331,6 @@ class SeatingController {
                 $branchKeysB = array_values(array_keys($branchesB));
                 $maxBranches = max(count($branchKeysA), count($branchKeysB) ?: 0);
 
-                // Each room gets: 1 branch from ExamA (even cols) + 1 branch from ExamB (odd cols)
                 for ($bi = 0; $bi < $maxBranches; $bi++) {
                     $branchA  = $branchKeysA[$bi] ?? null;
                     $branchB  = $hasB ? ($branchKeysB[$bi] ?? null) : null;
@@ -358,7 +342,6 @@ class SeatingController {
                     $ptrA = 0;
                     $ptrB = 0;
 
-                    // Fill rooms until both branch queues exhausted
                     while ($ptrA < count($colStudA) || $ptrB < count($colStudB)) {
                         if ($roomIndex >= count($rooms)) break;
                         $room     = $rooms[$roomIndex++];
@@ -367,7 +350,6 @@ class SeatingController {
                         if ($COLS % 2 !== 0) $COLS--;
                         $numRows  = (int)ceil($capacity / $COLS);
 
-                        // Even cols (0,2,4...) = ExamA branch | Odd cols (1,3,5...) = ExamB branch
                         $grid = array_fill(0, $numRows, array_fill(0, $COLS, null));
                         for ($col = 0; $col < $COLS; $col++) {
                             $isA = ($col % 2 === 0);
@@ -380,7 +362,6 @@ class SeatingController {
                             }
                         }
 
-                        // Insert row-by-row
                         $seatNum = 1;
                         for ($row = 0; $row < $numRows; $row++) {
                             for ($col = 0; $col < $COLS; $col++) {
@@ -399,7 +380,7 @@ class SeatingController {
                 $exA = array_values(array_filter($shiftExams, fn($e) => $e['id'] == $examIdA))[0] ?? null;
                 $exB = $examIdB ? array_values(array_filter($shiftExams, fn($e) => $e['id'] == $examIdB))[0] ?? null : null;
                 $summary[] = [
-                    'shift'  => $shift,
+                    'shift'  => $shiftName,
                     'examA'  => $exA ? "{$exA['course_code']} - {$exA['subject']}" : null,
                     'examB'  => $exB ? "{$exB['course_code']} - {$exB['subject']}" : null,
                     'paired' => $exB !== null,
@@ -411,29 +392,26 @@ class SeatingController {
 
         $db->commit();
 
-        // ── Assign exactly 2 faculty per ROOM per SHIFT independently ────────
-        // Each shift gets its own random faculty pool — same faculty CAN appear in both shifts
+        // Assign exactly 2 faculty per ROOM per SHIFT
         $invigilInsert = $db->prepare('INSERT IGNORE INTO invigilation_allocations (exam_id, room_id, faculty_id, role) VALUES (?, ?, ?, ?)');
         $dutyUpdate    = $db->prepare('UPDATE faculty SET total_duties = total_duties + 1 WHERE id = ?');
 
-        // Clear existing invigilation for all exams on this date+shift
         $examIds = array_column($exams, 'id');
         if (!empty($examIds)) {
             $ph = implode(',', array_fill(0, count($examIds), '?'));
+            // Decrement duties before clearing
+            $db->prepare("
+                UPDATE faculty f
+                JOIN invigilation_allocations ia ON ia.faculty_id = f.id
+                SET f.total_duties = GREATEST(0, f.total_duties - 1)
+                WHERE ia.exam_id IN ($ph)
+            ")->execute($examIds);
             $db->prepare("DELETE FROM invigilation_allocations WHERE exam_id IN ($ph)")->execute($examIds);
         }
 
         $db->beginTransaction();
 
-        // Process each shift independently
-        foreach ($byShift as $shift => $shiftExams) {
-            // Fresh faculty pool for each shift — sorted by duties, randomised within same duty count
-            $stmt = $db->prepare('SELECT * FROM faculty WHERE is_available = 1 ORDER BY total_duties ASC, RAND()');
-            $stmt->execute();
-            $shiftFaculty   = $stmt->fetchAll();
-            $assignedShift  = []; // reset per shift
-
-            // Get rooms used by this shift's exams
+        foreach ($byShift as $shiftName => $shiftExams) {
             $shiftExamIds = array_column($shiftExams, 'id');
             $ph2 = implode(',', array_fill(0, count($shiftExamIds), '?'));
             $stmt = $db->prepare("
@@ -446,26 +424,30 @@ class SeatingController {
             $stmt->execute($shiftExamIds);
             $shiftRooms = $stmt->fetchAll();
 
+            $stmt = $db->prepare('SELECT * FROM faculty WHERE is_available = 1 ORDER BY total_duties ASC, RAND()');
+            $stmt->execute();
+            $allFac = $stmt->fetchAll();
+
+            $assignedThisShift = [];
             $fi = 0;
+
             foreach ($shiftRooms as $roomRow) {
                 $roomId        = $roomRow['room_id'];
                 $primaryExamId = $roomRow['primary_exam_id'];
 
-                // Chief
-                while ($fi < count($shiftFaculty) && isset($assignedShift[$shiftFaculty[$fi]['id']])) $fi++;
-                if ($fi >= count($shiftFaculty)) break;
-                $chief = $shiftFaculty[$fi++];
+                while ($fi < count($allFac) && isset($assignedThisShift[$allFac[$fi]['id']])) $fi++;
+                if ($fi >= count($allFac)) break;
+                $chief = $allFac[$fi++];
                 $invigilInsert->execute([$primaryExamId, $roomId, $chief['id'], 'chief']);
                 $dutyUpdate->execute([$chief['id']]);
-                $assignedShift[$chief['id']] = true;
+                $assignedThisShift[$chief['id']] = true;
 
-                // Assistant
-                while ($fi < count($shiftFaculty) && isset($assignedShift[$shiftFaculty[$fi]['id']])) $fi++;
-                if ($fi >= count($shiftFaculty)) break;
-                $asst = $shiftFaculty[$fi++];
+                while ($fi < count($allFac) && isset($assignedThisShift[$allFac[$fi]['id']])) $fi++;
+                if ($fi >= count($allFac)) break;
+                $asst = $allFac[$fi++];
                 $invigilInsert->execute([$primaryExamId, $roomId, $asst['id'], 'assistant']);
                 $dutyUpdate->execute([$asst['id']]);
-                $assignedShift[$asst['id']] = true;
+                $assignedThisShift[$asst['id']] = true;
             }
         }
 

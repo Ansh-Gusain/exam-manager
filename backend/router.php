@@ -49,12 +49,13 @@ class Router {
         $this->add('POST',   '/api/students/bulk', [StudentController::class, 'bulk']);
 
         // Faculty
-        $this->add('GET',    '/api/faculty',      [FacultyController::class, 'index']);
-        $this->add('POST',   '/api/faculty',      [FacultyController::class, 'store']);
-        $this->add('GET',    '/api/faculty/{id}', [FacultyController::class, 'show']);
-        $this->add('PUT',    '/api/faculty/{id}', [FacultyController::class, 'update']);
-        $this->add('DELETE', '/api/faculty/{id}', [FacultyController::class, 'destroy']);
-        $this->add('POST',   '/api/faculty/bulk', [FacultyController::class, 'bulk']);
+        $this->add('GET',    '/api/faculty',           [FacultyController::class, 'index']);
+        $this->add('POST',   '/api/faculty',           [FacultyController::class, 'store']);
+        $this->add('GET',    '/api/faculty/{id}',      [FacultyController::class, 'show']);
+        $this->add('PUT',    '/api/faculty/{id}',      [FacultyController::class, 'update']);
+        $this->add('POST',   '/api/faculty/{id}/leave',[FacultyController::class, 'setLeave']);
+        $this->add('DELETE', '/api/faculty/{id}',      [FacultyController::class, 'destroy']);
+        $this->add('POST',   '/api/faculty/bulk',      [FacultyController::class, 'bulk']);
 
         // Rooms
         $this->add('GET',    '/api/rooms',      [RoomController::class, 'index']);

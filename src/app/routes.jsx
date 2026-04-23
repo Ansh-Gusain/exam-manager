@@ -8,7 +8,7 @@ import { ExamManagement } from "./components/ExamManagement";
 import { SeatingAllocation } from "./components/SeatingAllocation";
 import { InvigilatorAllocation } from "./components/InvigilatorAllocation";
 import { AttendanceManagement } from "./components/AttendanceManagement";
-import { ReplacementManagement } from "./components/ReplacementManagement";
+import { Summary } from "./components/Summary";
 import { Reports } from "./components/Reports";
 import { AcademicStructure } from "./components/AcademicStructure";
 import { NotFound } from "./components/NotFound";
@@ -41,7 +41,7 @@ const router = createBrowserRouter([
       { path: "seating",      Component: SeatingAllocation },
       { path: "invigilation", Component: InvigilatorAllocation },
       { path: "attendance",   Component: AttendanceManagement },
-      { path: "replacements", Component: ReplacementManagement },
+      { path: "summary",      Component: Summary },
       { path: "reports",      Component: Reports },
       { path: "*",            Component: NotFound },
     ]

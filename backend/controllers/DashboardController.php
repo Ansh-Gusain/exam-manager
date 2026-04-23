@@ -23,12 +23,20 @@ class DashboardController {
         }
         $stats['exams'] = $examStats;
 
-        // Upcoming exams
-        $stmt = $db->prepare('SELECT * FROM exams WHERE status = "scheduled" AND date >= CURDATE() ORDER BY date, start_time LIMIT 5');
+        // Upcoming exams — include course_code, shift, batch
+        $stmt = $db->prepare('
+            SELECT id, name, course_code, subject, date, start_time, shift, semester, batch, branches, status
+            FROM exams
+            WHERE status = "scheduled" AND date >= CURDATE()
+            ORDER BY date, start_time
+            LIMIT 5
+        ');
         $stmt->execute();
         $upcoming = $stmt->fetchAll();
         foreach ($upcoming as &$e) {
-            $e['branches'] = json_decode($e['branches'], true) ?? [];
+            $e['branches']   = json_decode($e['branches'], true) ?? [];
+            $e['courseCode'] = $e['course_code'];
+            $e['startTime']  = $e['start_time'];
         }
         $stats['upcomingExams'] = $upcoming;
 
@@ -46,6 +54,19 @@ class DashboardController {
         // Student distribution by school
         $stmt = $db->query('SELECT school, COUNT(*) AS count FROM students GROUP BY school ORDER BY school');
         $stats['studentsBySchool'] = $stmt->fetchAll();
+
+        // Seating & attendance stats
+        $stats['totalSeated']    = (int)$db->query('SELECT COUNT(DISTINCT student_id) FROM seating_allocations')->fetchColumn();
+        $stats['totalAttendance']= (int)$db->query('SELECT COUNT(*) FROM attendance_records WHERE status != "not-marked"')->fetchColumn();
+        $stats['presentCount']   = (int)$db->query('SELECT COUNT(*) FROM attendance_records WHERE status = "present"')->fetchColumn();
+        $stats['absentCount']    = (int)$db->query('SELECT COUNT(*) FROM attendance_records WHERE status = "absent"')->fetchColumn();
+
+        // Faculty on leave
+        $stats['facultyOnLeave'] = (int)$db->query('SELECT COUNT(*) FROM faculty WHERE status = "on_leave"')->fetchColumn();
+
+        // Student distribution by batch
+        $stmt = $db->query('SELECT batch, COUNT(*) AS count FROM students GROUP BY batch ORDER BY batch');
+        $stats['studentsByBatch'] = $stmt->fetchAll();
 
         jsonResponse($stats);
     }

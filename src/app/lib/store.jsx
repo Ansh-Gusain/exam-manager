@@ -62,6 +62,10 @@ export function StoreProvider({ children }) {
       if (out.end_time !== undefined)    out.endTime     = out.end_time;
       if (out.course_code !== undefined) out.courseCode  = out.course_code;
       if (out.employee_id !== undefined) out.employeeId  = out.employee_id;
+      // Ensure semester is always a number for === comparisons
+      if (out.semester !== undefined)    out.semester    = Number(out.semester);
+      // Ensure roll_number is always mapped to rollNumber
+      if (out.roll_number !== undefined) out.rollNumber  = out.roll_number;
       return out;
     });
   };

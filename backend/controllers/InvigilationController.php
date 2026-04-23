@@ -19,7 +19,7 @@ class InvigilationController {
         }
 
         $sql = '
-            SELECT ia.*, f.name AS faculty_name, f.employee_id,
+            SELECT ia.*, f.name AS faculty_name, f.phone, f.department,
                    r.room_number, r.building, e.name AS exam_name
             FROM invigilation_allocations ia
             JOIN faculty f ON ia.faculty_id = f.id
@@ -64,15 +64,15 @@ class InvigilationController {
         $roomsCount   = count($rooms);
         $facultyNeeded = $roomsCount * 2; // 2 per room (1 chief + 1 assistant)
 
-        // Load faculty already assigned to ANY exam on the SAME date
-        // (a faculty cannot invigilate two rooms at the same time)
+        // Load faculty already assigned to same date AND same shift only
+        // (faculty CAN be assigned to same date but different shift)
         $stmt = $db->prepare('
             SELECT DISTINCT ia.faculty_id
             FROM invigilation_allocations ia
             JOIN exams e ON ia.exam_id = e.id
-            WHERE e.date = ? AND ia.exam_id != ?
+            WHERE e.date = ? AND e.shift = ? AND ia.exam_id != ?
         ');
-        $stmt->execute([$exam['date'], $data['examId']]);
+        $stmt->execute([$exam['date'], $exam['shift'] ?? 'Shift 1 (Morning)', $data['examId']]);
         $busyOnDate = array_flip(array_column($stmt->fetchAll(), 'faculty_id'));
 
         // Load faculty available, not busy on this date, sorted by total_duties (load balance)
@@ -88,9 +88,16 @@ class InvigilationController {
         $available = array_values(array_filter($allFaculty, fn($f) => !isset($busyOnDate[$f['id']])));
 
         if (count($available) < $facultyNeeded) {
-            errorResponse("Not enough available faculty. Need $facultyNeeded (2 per room × $roomsCount rooms) but only " . count($available) . " available on this date.");
+            errorResponse("Not enough available faculty. Need $facultyNeeded (2 per room Ã— $roomsCount rooms) but only " . count($available) . " available on this date.");
         }
 
+        // Decrement duties for existing faculty before clearing
+        $db->prepare('
+            UPDATE faculty f
+            JOIN invigilation_allocations ia ON ia.faculty_id = f.id
+            SET f.total_duties = GREATEST(0, f.total_duties - 1)
+            WHERE ia.exam_id = ?
+        ')->execute([$data['examId']]);
         // Clear existing allocations for this exam
         $db->prepare('DELETE FROM invigilation_allocations WHERE exam_id = ?')->execute([$data['examId']]);
 
@@ -120,14 +127,22 @@ class InvigilationController {
         $db->commit();
 
         jsonResponse([
-            'message' => "$allocated invigilators assigned ($roomsCount rooms × 2 faculty each)",
+            'message' => "$allocated invigilators assigned ($roomsCount rooms Ã— 2 faculty each)",
             'count'   => $allocated,
             'rooms'   => $roomsCount,
         ]);
     }
 
     public function clearByExam(array $params): void {
-        getDB()->prepare('DELETE FROM invigilation_allocations WHERE exam_id = ?')->execute([$params['examId']]);
+        $db = getDB();
+        // Decrement duties for all faculty assigned to this exam before deleting
+        $db->prepare('
+            UPDATE faculty f
+            JOIN invigilation_allocations ia ON ia.faculty_id = f.id
+            SET f.total_duties = GREATEST(0, f.total_duties - 1)
+            WHERE ia.exam_id = ?
+        ')->execute([$params['examId']]);
+        $db->prepare('DELETE FROM invigilation_allocations WHERE exam_id = ?')->execute([$params['examId']]);
         jsonResponse(['message' => 'Invigilation allocations cleared']);
     }
 
@@ -171,7 +186,7 @@ class InvigilationController {
 
         // Return updated assignments
         $stmt = $db->prepare('
-            SELECT ia.*, f.name AS faculty_name, f.employee_id, f.department
+            SELECT ia.*, f.name AS faculty_name, f.phone, f.department
             FROM invigilation_allocations ia
             JOIN faculty f ON ia.faculty_id = f.id
             WHERE ia.room_id = ? AND ia.exam_id = ?
@@ -211,7 +226,7 @@ class InvigilationController {
 
         // Return updated record with faculty info
         $stmt = $db->prepare('
-            SELECT ia.*, f.name AS faculty_name, f.employee_id, f.department,
+            SELECT ia.*, f.name AS faculty_name, f.phone, f.department,
                    r.room_number, e.name AS exam_name
             FROM invigilation_allocations ia
             JOIN faculty f ON ia.faculty_id = f.id
@@ -237,16 +252,21 @@ class InvigilationController {
         $exams = $stmt->fetchAll();
         if (empty($exams)) errorResponse("No exams found on $date");
 
-        // Clear existing invigilation for all exams on this date
-        $examIds = array_column($exams, 'id');
+        // Decrement duties for all faculty currently assigned to these exams
         $ph = implode(',', array_fill(0, count($examIds), '?'));
+        $db->prepare("
+            UPDATE faculty f
+            JOIN invigilation_allocations ia ON ia.faculty_id = f.id
+            SET f.total_duties = GREATEST(0, f.total_duties - 1)
+            WHERE ia.exam_id IN ($ph)
+        ")->execute($examIds);
+        // Clear existing invigilation for all exams on this date
         $db->prepare("DELETE FROM invigilation_allocations WHERE exam_id IN ($ph)")->execute($examIds);
 
         // Load faculty sorted by total_duties ASC (load balancing)
         $stmt = $db->prepare('SELECT * FROM faculty WHERE is_available = 1 ORDER BY total_duties ASC, RAND()');
         $stmt->execute();
-        $allFaculty    = $stmt->fetchAll();
-        $assignedToday = [];
+        $allFaculty = $stmt->fetchAll();
 
         $insertStmt = $db->prepare('INSERT IGNORE INTO invigilation_allocations (exam_id, room_id, faculty_id, role) VALUES (?, ?, ?, ?)');
         $dutyUpdate = $db->prepare('UPDATE faculty SET total_duties = total_duties + 1 WHERE id = ?');
@@ -254,33 +274,41 @@ class InvigilationController {
         $db->beginTransaction();
         $totalAssigned = 0;
 
+        // Group exams by shift — each shift gets independent faculty pool
+        $byShift = [];
         foreach ($exams as $exam) {
-            // Get rooms that have seating allocations for this exam
-            $stmt = $db->prepare('SELECT DISTINCT room_id FROM seating_allocations WHERE exam_id = ?');
-            $stmt->execute([$exam['id']]);
-            $roomIds = array_column($stmt->fetchAll(), 'room_id');
+            $byShift[$exam['shift'] ?? 'Shift 1 (Morning)'][] = $exam;
+        }
 
-            $pool = array_values(array_filter($allFaculty, fn($f) => !isset($assignedToday[$f['id']])));
-            $fi   = 0;
+        foreach ($byShift as $shift => $shiftExams) {
+            $assignedShift = []; // only block within same shift
 
-            foreach ($roomIds as $roomId) {
-                // Chief
-                while ($fi < count($pool) && isset($assignedToday[$pool[$fi]['id']])) $fi++;
-                if ($fi >= count($pool)) break;
-                $chief = $pool[$fi++];
-                $insertStmt->execute([$exam['id'], $roomId, $chief['id'], 'chief']);
-                $dutyUpdate->execute([$chief['id']]);
-                $assignedToday[$chief['id']] = true;
-                $totalAssigned++;
+            foreach ($shiftExams as $exam) {
+                $stmt = $db->prepare('SELECT DISTINCT room_id FROM seating_allocations WHERE exam_id = ?');
+                $stmt->execute([$exam['id']]);
+                $roomIds = array_column($stmt->fetchAll(), 'room_id');
 
-                // Assistant
-                while ($fi < count($pool) && isset($assignedToday[$pool[$fi]['id']])) $fi++;
-                if ($fi >= count($pool)) break;
-                $asst = $pool[$fi++];
-                $insertStmt->execute([$exam['id'], $roomId, $asst['id'], 'assistant']);
-                $dutyUpdate->execute([$asst['id']]);
-                $assignedToday[$asst['id']] = true;
-                $totalAssigned++;
+                // Pool: all available faculty not yet assigned in THIS shift
+                $pool = array_values(array_filter($allFaculty, fn($f) => !isset($assignedShift[$f['id']])));
+                $fi   = 0;
+
+                foreach ($roomIds as $roomId) {
+                    while ($fi < count($pool) && isset($assignedShift[$pool[$fi]['id']])) $fi++;
+                    if ($fi >= count($pool)) break;
+                    $chief = $pool[$fi++];
+                    $insertStmt->execute([$exam['id'], $roomId, $chief['id'], 'chief']);
+                    $dutyUpdate->execute([$chief['id']]);
+                    $assignedShift[$chief['id']] = true;
+                    $totalAssigned++;
+
+                    while ($fi < count($pool) && isset($assignedShift[$pool[$fi]['id']])) $fi++;
+                    if ($fi >= count($pool)) break;
+                    $asst = $pool[$fi++];
+                    $insertStmt->execute([$exam['id'], $roomId, $asst['id'], 'assistant']);
+                    $dutyUpdate->execute([$asst['id']]);
+                    $assignedShift[$asst['id']] = true;
+                    $totalAssigned++;
+                }
             }
         }
 
@@ -293,3 +321,4 @@ class InvigilationController {
         ]);
     }
 }
+
