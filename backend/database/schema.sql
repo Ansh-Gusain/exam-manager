@@ -4,8 +4,8 @@
 CREATE DATABASE IF NOT EXISTS exam_manager CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE exam_manager;
 
--- Users (auth)
-CREATE TABLE IF NOT EXISTS users (
+-- Admin Login (auth)
+CREATE TABLE IF NOT EXISTS admin_login (
     id         INT AUTO_INCREMENT PRIMARY KEY,
     username   VARCHAR(100) UNIQUE NOT NULL,
     email      VARCHAR(150) UNIQUE NOT NULL,
@@ -144,37 +144,6 @@ CREATE TABLE IF NOT EXISTS attendance_records (
     INDEX idx_status (status)
 );
 
--- Replacement Logs
-CREATE TABLE IF NOT EXISTS replacement_logs (
-    id                     INT AUTO_INCREMENT PRIMARY KEY,
-    exam_id                INT NOT NULL,
-    room_id                INT NOT NULL,
-    original_faculty_id    INT NOT NULL,
-    replacement_faculty_id INT NULL,
-    reason                 TEXT NOT NULL,
-    status                 ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending',
-    requested_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    approved_at            TIMESTAMP NULL,
-    FOREIGN KEY (exam_id)                 REFERENCES exams(id)   ON DELETE CASCADE,
-    FOREIGN KEY (room_id)                 REFERENCES rooms(id)   ON DELETE CASCADE,
-    FOREIGN KEY (original_faculty_id)     REFERENCES faculty(id) ON DELETE CASCADE,
-    FOREIGN KEY (replacement_faculty_id)  REFERENCES faculty(id) ON DELETE SET NULL,
-    INDEX idx_exam (exam_id),
-    INDEX idx_status (status)
-);
-
 -- Default admin user (password: admin123)
-INSERT IGNORE INTO users (username, email, password, name, role)
+INSERT IGNORE INTO admin_login (username, email, password, name, role)
 VALUES ('admin', 'admin@gbu.ac.in', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'Administrator', 'admin');
-
--- Password Reset Tokens
-CREATE TABLE IF NOT EXISTS password_resets (
-    id         INT AUTO_INCREMENT PRIMARY KEY,
-    email      VARCHAR(150) NOT NULL,
-    token      VARCHAR(64) NOT NULL UNIQUE,
-    expires_at TIMESTAMP NOT NULL,
-    used       TINYINT(1) NOT NULL DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_token (token),
-    INDEX idx_email (email)
-);

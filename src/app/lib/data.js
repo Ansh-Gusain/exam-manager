@@ -310,29 +310,7 @@ const initialExams = generateExams();
 const initialSeatingAllocations = [];
 const initialInvigilationAllocations = [];
 const initialAttendanceRecords = [];
-const initialReplacementLogs = [
-  {
-    id: "rep-1",
-    examId: "e-5",
-    roomId: "r-1",
-    originalFacultyId: "f-3",
-    replacementFacultyId: "f-12",
-    reason: "Medical leave",
-    status: "approved",
-    requestedAt: "2026-02-19T08:00:00",
-    approvedAt: "2026-02-19T09:30:00"
-  },
-  {
-    id: "rep-2",
-    examId: "e-1",
-    roomId: "r-2",
-    originalFacultyId: "f-7",
-    replacementFacultyId: "",
-    reason: "Family emergency",
-    status: "pending",
-    requestedAt: "2026-02-19T14:00:00"
-  }
-];
+
 export {
   BRANCHES_BY_DEPARTMENT,
   DEPARTMENTS_BY_SCHOOL,
@@ -349,7 +327,6 @@ export {
   initialExams,
   initialFaculty,
   initialInvigilationAllocations,
-  initialReplacementLogs,
   initialRooms,
   initialSeatingAllocations,
   initialStudents

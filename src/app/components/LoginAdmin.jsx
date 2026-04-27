@@ -1,6 +1,6 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, Link } from "react-router";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "./ui/card";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -97,19 +97,18 @@ function LoginAdmin() {
               )
             ] })
           ] }),
-          /* @__PURE__ */ jsxs("div", { className: "flex items-center justify-between text-sm", children: [
+          /* @__PURE__ */ jsxs("div", { className: "flex items-center text-sm", children: [
             /* @__PURE__ */ jsxs("label", { className: "flex items-center gap-2 cursor-pointer", children: [
               /* @__PURE__ */ jsx("input", { type: "checkbox", className: "rounded bg-gray-800 border-gray-600" }),
               /* @__PURE__ */ jsx("span", { className: "text-gray-400", children: "Remember me" })
-            ] }),
-            /* @__PURE__ */ jsx("a", { href: "/forgot-password/admin", className: "text-gray-400 hover:text-white hover:underline", children: "Forgot password?" })
+            ] })
           ] }),
           /* @__PURE__ */ jsx(Button, { type: "submit", className: "w-full bg-white text-black hover:bg-gray-200", size: "lg", disabled: loading, children: loading ? "Logging in..." : "Login to Dashboard" })
         ] }),
         /* @__PURE__ */ jsx("div", { className: "mt-6 pt-6 border-t border-gray-700 text-center", children: /* @__PURE__ */ jsxs("p", { className: "text-sm text-gray-500", children: [
           "Don't have an account?",
           " ",
-          /* @__PURE__ */ jsx("a", { href: "/signup/admin", className: "text-gray-300 hover:text-white hover:underline", children: "Create one" }),
+          /* @__PURE__ */ jsx(Link, { to: "/signup/admin", className: "text-gray-300 hover:text-white hover:underline", children: "Create one" }),
           " · ",
           /* @__PURE__ */ jsx("a", { href: "#", className: "text-gray-400 hover:text-white hover:underline", children: "Contact IT Support" })
         ] }) })

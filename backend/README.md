@@ -114,13 +114,6 @@ Authorization: Bearer <jwt_token>
 | PUT    | `/api/attendance/{id}` | Mark `{ "status": "present", "signature": true }` |
 | POST   | `/api/attendance/mark-all-present` | Bulk mark `{ "examId": 1, "roomId": 2 }` |
 
-### Replacements
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET    | `/api/replacements` | List (filters: status, examId, facultyId) |
-| POST   | `/api/replacements` | Request replacement |
-| PUT    | `/api/replacements/{id}` | Approve/reject `{ "status": "approved", "replacementFacultyId": 5 }` |
-
 ### Reports
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -140,7 +133,7 @@ Authorization: Bearer <jwt_token>
 ### Dashboard
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/dashboard` | Stats, upcoming exams, recent replacements |
+| GET | `/api/dashboard` | Stats, upcoming exams |
 
 ---
 

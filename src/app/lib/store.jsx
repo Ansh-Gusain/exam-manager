@@ -12,7 +12,6 @@ export function StoreProvider({ children }) {
   const [seatingAllocations, setSeatingAllocations] = useState([]);
   const [invigilationAllocations, setInvigilationAllocations] = useState([]);
   const [attendanceRecords, setAttendanceRecords] = useState([]);
-  const [replacementLogs, setReplacementLogs] = useState([]);
   const [currentRole, setCurrentRole] = useState('admin');
   const [loggedInFacultyId, setLoggedInFacultyId] = useState(null);
   const [loggedInStudentId, setLoggedInStudentId] = useState(null);
@@ -82,7 +81,6 @@ export function StoreProvider({ children }) {
         api.seating.list(),
         api.invigilation.list(),
         api.attendance.list(),
-        api.replacements.list(),
       ]);
       setStudents(normalize(s));
       setFaculty(normalize(f));
@@ -91,7 +89,6 @@ export function StoreProvider({ children }) {
       setSeatingAllocations(normalize(seat));
       setInvigilationAllocations(normalize(invig));
       setAttendanceRecords(normalize(att));
-      setReplacementLogs(normalize(rep));
     } catch (err) {
       const msg = err.message || 'Failed to load data';
       setDataError(msg);
@@ -109,7 +106,6 @@ export function StoreProvider({ children }) {
   const refreshSeating     = useCallback(async () => { try { setSeatingAllocations(normalize(await api.seating.list())); } catch {} }, []);
   const refreshInvigilation= useCallback(async () => { try { setInvigilationAllocations(normalize(await api.invigilation.list())); } catch {} }, []);
   const refreshAttendance  = useCallback(async () => { try { setAttendanceRecords(normalize(await api.attendance.list())); } catch {} }, []);
-  const refreshReplacements= useCallback(async () => { try { setReplacementLogs(normalize(await api.replacements.list())); } catch {} }, []);
 
   useEffect(() => {
     const token = localStorage.getItem('jwt_token');
@@ -125,13 +121,12 @@ export function StoreProvider({ children }) {
       seatingAllocations, setSeatingAllocations,
       invigilationAllocations, setInvigilationAllocations,
       attendanceRecords, setAttendanceRecords,
-      replacementLogs, setReplacementLogs,
       currentRole, setCurrentRole,
       loggedInFacultyId, setLoggedInFacultyId,
       loggedInStudentId, setLoggedInStudentId,
       loading, dataError, refreshAll,
       refreshStudents, refreshFaculty, refreshRooms, refreshExams,
-      refreshSeating, refreshInvigilation, refreshAttendance, refreshReplacements,
+      refreshSeating, refreshInvigilation, refreshAttendance,
     }}>
       {children}
     </StoreContext.Provider>

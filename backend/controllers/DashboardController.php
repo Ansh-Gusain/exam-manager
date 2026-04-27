@@ -40,17 +40,6 @@ class DashboardController {
         }
         $stats['upcomingExams'] = $upcoming;
 
-        // Recent replacements
-        $stmt = $db->prepare('
-            SELECT rl.*, f1.name AS original_faculty_name, e.name AS exam_name
-            FROM replacement_logs rl
-            JOIN faculty f1 ON rl.original_faculty_id = f1.id
-            JOIN exams e    ON rl.exam_id = e.id
-            ORDER BY rl.requested_at DESC LIMIT 5
-        ');
-        $stmt->execute();
-        $stats['recentReplacements'] = $stmt->fetchAll();
-
         // Student distribution by school
         $stmt = $db->query('SELECT school, COUNT(*) AS count FROM students GROUP BY school ORDER BY school');
         $stats['studentsBySchool'] = $stmt->fetchAll();

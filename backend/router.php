@@ -8,7 +8,6 @@ require_once __DIR__ . '/controllers/ExamController.php';
 require_once __DIR__ . '/controllers/SeatingController.php';
 require_once __DIR__ . '/controllers/InvigilationController.php';
 require_once __DIR__ . '/controllers/AttendanceController.php';
-require_once __DIR__ . '/controllers/ReplacementController.php';
 require_once __DIR__ . '/controllers/ReportController.php';
 require_once __DIR__ . '/controllers/AcademicController.php';
 require_once __DIR__ . '/controllers/DashboardController.php';
@@ -25,9 +24,6 @@ class Router {
         $this->add('POST', '/api/auth/login',           [AuthController::class, 'login'],           false);
         $this->add('POST', '/api/auth/signup',          [AuthController::class, 'signup'],          false);
         $this->add('POST', '/api/auth/google',          [AuthController::class, 'googleAuth'],      false);
-        $this->add('POST', '/api/auth/forgot-password', [AuthController::class, 'forgotPassword'],  false);
-        $this->add('POST', '/api/auth/reset-password',  [AuthController::class, 'resetPassword'],   false);
-        $this->add('GET',  '/api/auth/verify-reset',    [AuthController::class, 'verifyResetToken'], false);
         $this->add('POST', '/api/auth/logout',          [AuthController::class, 'logout']);
         $this->add('GET',  '/api/auth/me',              [AuthController::class, 'me']);
 
@@ -91,11 +87,6 @@ class Router {
         $this->add('POST', '/api/attendance/generate',     [AttendanceController::class, 'generate']);
         $this->add('PUT',  '/api/attendance/{id}',         [AttendanceController::class, 'update']);
         $this->add('POST', '/api/attendance/mark-all-present', [AttendanceController::class, 'markAllPresent']);
-
-        // Replacements
-        $this->add('GET',  '/api/replacements',      [ReplacementController::class, 'index']);
-        $this->add('POST', '/api/replacements',      [ReplacementController::class, 'store']);
-        $this->add('PUT',  '/api/replacements/{id}', [ReplacementController::class, 'update']);
 
         // Reports
         $this->add('GET', '/api/reports/room-utilization', [ReportController::class, 'roomUtilization']);

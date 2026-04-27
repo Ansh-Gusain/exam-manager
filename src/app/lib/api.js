@@ -61,12 +61,6 @@ export const api = {
       request('/api/auth/signup', { method: 'POST', body: JSON.stringify({ name, email, password, role }) }),
     googleAuth: (credential) =>
       request('/api/auth/google', { method: 'POST', body: JSON.stringify({ credential }) }),
-    forgotPassword: (email) =>
-      request('/api/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) }),
-    resetPassword: (token, password) =>
-      request('/api/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, password }) }),
-    verifyResetToken: (token) =>
-      request(`/api/auth/verify-reset?token=${token}`),
     me: () => request('/api/auth/me'),
     logout: () => request('/api/auth/logout', { method: 'POST' }),
   },
@@ -134,12 +128,6 @@ export const api = {
     generate: (examId, roomId) => request('/api/attendance/generate', { method: 'POST', body: JSON.stringify({ examId: Number(examId), roomId: Number(roomId) }) }),
     update: (id, data) => request(`/api/attendance/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     markAllPresent: (examId, roomId) => request('/api/attendance/mark-all-present', { method: 'POST', body: JSON.stringify({ examId: Number(examId), roomId: Number(roomId) }) }),
-  },
-
-  replacements: {
-    list: (params = {}) => request('/api/replacements?' + new URLSearchParams(params)),
-    create: (data) => request('/api/replacements', { method: 'POST', body: JSON.stringify(data) }),
-    update: (id, data) => request(`/api/replacements/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   },
 
   reports: {

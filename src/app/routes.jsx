@@ -14,8 +14,6 @@ import { AcademicStructure } from "./components/AcademicStructure";
 import { NotFound } from "./components/NotFound";
 import { LoginAdmin } from "./components/LoginAdmin";
 import { SignupAdmin } from "./components/SignupAdmin";
-import { ForgotPasswordAdmin } from "./components/ForgotPasswordAdmin";
-import { ResetPassword } from "./components/ResetPassword";
 
 const router = createBrowserRouter([
   // Redirect root to admin login
@@ -24,8 +22,6 @@ const router = createBrowserRouter([
   // Admin auth
   { path: "/login/admin",           Component: LoginAdmin },
   { path: "/signup/admin",          Component: SignupAdmin },
-  { path: "/forgot-password/admin", Component: ForgotPasswordAdmin },
-  { path: "/reset-password",        Component: ResetPassword },
 
   // Admin portal
   {

@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import {
   LayoutDashboard, Users, DoorOpen, FileText, Grid3X3,
   UserCheck, ClipboardList, BarChart3, Menu,
-  LogOut, GraduationCap, UserCog, X, Loader2, Bell, ChevronRight, BookOpen
+  LogOut, GraduationCap, UserCog, X, Loader2, ChevronRight, BookOpen
 } from "lucide-react";
 
 const navGroups = [
@@ -75,12 +75,11 @@ function UserAvatar({ name, email, role }) {
 }
 
 export function Layout() {
-  const { replacementLogs, setCurrentRole, loading } = useStore();
+  const { setCurrentRole, loading } = useStore();
   const { user, signOut } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
-  const pendingReplacements = replacementLogs.filter(r => r.status === "pending").length;
   const pageTitle = pageTitles[location.pathname] ?? "Admin Portal";
 
   useEffect(() => {
@@ -175,13 +174,6 @@ export function Layout() {
           </div>
 
           <div className="flex-1" />
-
-          {pendingReplacements > 0 && (
-            <button onClick={() => navigate("/admin/replacements")} className="relative p-2 rounded-lg hover:bg-accent transition-colors">
-              <Bell className="w-4 h-4 text-muted-foreground" />
-              <span className="absolute top-1 right-1 w-2 h-2 bg-destructive rounded-full" />
-            </button>
-          )}
 
           <Badge variant="outline" className="text-[0.7rem] hidden sm:flex">
             {new Date().toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
