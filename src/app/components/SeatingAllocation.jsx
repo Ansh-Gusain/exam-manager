@@ -314,7 +314,7 @@ function RoomSeatingGrid({ room, allocations, students, exam, exams = [], invigi
 
 // ─── Main Component ────────────────────────────────────────────────────────
 export function SeatingAllocation() {
-  const { students, rooms, exams, faculty, seatingAllocations, invigilationAllocations, refreshSeating, refreshInvigilation } = useStore();
+  const { students, rooms, exams, faculty, seatingAllocations, invigilationAllocations, refreshSeating, refreshInvigilation, refreshExams } = useStore();
 
   const [selectedDate,   setSelectedDate]   = useState("");
   const [selectedShift,  setSelectedShift]  = useState("");
@@ -596,10 +596,11 @@ export function SeatingAllocation() {
     setAllocating(true);
     try {
       const result = await api.seating.allocateByDate(selectedDate, selectedShift);
-      await refreshSeating();
-      await refreshInvigilation();
+      await Promise.all([refreshSeating(), refreshInvigilation(), refreshExams()]);
       toast.success(result.message || `Allocated ${result.count} students on ${selectedDate} — ${selectedShift}`);
-      if (examsOnDate.length > 0) setSelectedExamId(examsOnDate[0].id);
+      // Reset to "all" so the UI re-renders with fresh data
+      setSelectedExamId("all");
+      setSelectedRoomId("all");
     } catch (err) {
       toast.error(err.message || "Allocation failed");
     } finally {
