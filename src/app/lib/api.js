@@ -1,5 +1,5 @@
-// API base URL - update this if your XAMPP path differs
-export const API_BASE = 'http://localhost/exam-manager/backend';
+// API base URL - uses env variable in production, falls back to localhost for development
+export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost/exam-manager/backend';
 
 function getToken() {
   return localStorage.getItem('jwt_token');

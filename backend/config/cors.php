@@ -12,6 +12,12 @@ $allowedOrigins = [
     'http://localhost',
 ];
 
+// Add Railway frontend URL from environment variable if set
+$frontendUrl = getenv('FRONTEND_URL') ?: ($_ENV['FRONTEND_URL'] ?? '');
+if ($frontendUrl) {
+    $allowedOrigins[] = rtrim($frontendUrl, '/');
+}
+
 $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
 if (in_array($origin, $allowedOrigins, true)) {
     header("Access-Control-Allow-Origin: $origin");
