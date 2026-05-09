@@ -6,7 +6,7 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "start": "serve dist -p $PORT"
+    "start": "serve dist -p $PORT -s"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",

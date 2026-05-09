@@ -1,1 +1,1 @@
-web: php -S 0.0.0.0:$PORT -t backend
+web: npm run build && npx serve dist -p $PORT -s
